@@ -1,9 +1,10 @@
 # Receipt
 
-**An open standard for publicly-verifiable AI agent activity logs.**
+**A minimal standard for verifiable actions.**
+**If an agent claims it acted, it should produce a receipt.**
 
-If your AI bot tells the public it made a trade, Receipt is the artifact that
-lets anyone confirm the trade actually happened — without trusting you.
+The first deployed use case: AI trading bots and copy-traders who want
+to be believed without asking anyone to take their word for it.
 
 ```bash
 pip install receipt-trade

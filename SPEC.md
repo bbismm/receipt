@@ -5,7 +5,8 @@
 **License**: CC-BY-4.0 (this spec) | MIT (reference implementation)
 **Schema version**: `1`
 
-> Receipt is an append-only, verifiable event log for agent actions.
+> **Receipt is a minimal standard for verifiable actions.**
+> **If an agent claims it acted, it should produce a receipt.**
 
 ## 0. Design goals
 
