@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Receipt — verify any agent</title>
+<style>
+  :root {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #7d8590;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922; --orange: #db6d28;
+    --card: #161b22; --border: #30363d;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 32px 24px; border-bottom: 1px solid var(--border); }
+  h1 { margin: 0; font-size: 28px; font-weight: 600; }
+  .tagline { color: var(--muted); margin-top: 8px; }
+  main { max-width: 880px; margin: 0 auto; padding: 24px; }
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+  input, button { font: inherit; padding: 8px 14px; border-radius: 6px;
+                  border: 1px solid var(--border); background: var(--card); color: var(--fg); }
+  input { flex: 1; min-width: 220px; font-family: var(--mono); font-size: 13px; }
+  button { cursor: pointer; }
+  button.primary { background: #238636; border-color: #2ea043; color: white; }
+  button.primary:hover { background: #2ea043; }
+  .verdict { padding: 24px; border-radius: 8px; margin-bottom: 24px;
+             border: 1px solid var(--border); background: var(--card); }
+  .verdict.VERIFIED { border-color: var(--green); background: rgba(63,185,80,0.08); }
+  .verdict.INVALID_CHAIN, .verdict.SUSPECT_VERIFICATION { border-color: var(--red); background: rgba(248,81,73,0.08); }
+  .verdict.UNVERIFIED_CLAIM, .verdict.STALE_RECONCILIATION, .verdict.BROKEN_ANCHOR { border-color: var(--yellow); background: rgba(210,153,34,0.08); }
+  .badge { font-size: 24px; font-weight: 600; }
+  .badge .icon { margin-right: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr));
+          gap: 12px; margin-top: 16px; }
+  .stat { padding: 12px; background: var(--bg); border-radius: 6px;
+          border: 1px solid var(--border); }
+  .stat .label { color: var(--muted); font-size: 12px; }
+  .stat .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+  .score { font-size: 56px; font-weight: 700; line-height: 1; }
+  .score.A { color: var(--green); }
+  .score.B { color: var(--green); }
+  .score.C { color: var(--yellow); }
+  .score.D, .score.F { color: var(--red); }
+  .breakdown { margin-top: 16px; }
+  .breakdown .row { display: flex; justify-content: space-between; padding: 6px 0;
+                    border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 13px; }
+  .breakdown .row:last-child { border-bottom: 0; }
+  .events { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .events .row { display: flex; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .events .row .kind { width: 140px; }
+  .kind.claim { color: #79c0ff; }
+  .kind.verified { color: var(--green); }
+  .kind.error { color: var(--red); }
+  .kind.heartbeat { color: var(--muted); }
+  .kind.signal_rejected { color: var(--orange); }
+  .kind.anchor { color: #d2a8ff; }
+  .kind.reconciliation { color: var(--yellow); }
+  .kind.external_action { color: #a5d6ff; }
+  details { margin-top: 16px; }
+  summary { cursor: pointer; color: var(--muted); }
+  pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto;
+        font-family: var(--mono); font-size: 12px; }
+  .footer { color: var(--muted); margin-top: 48px; font-size: 12px; padding: 24px; text-align: center; }
+  .footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div style="max-width:880px;margin:0 auto;">
+    <h1>Receipt</h1>
+    <div class="tagline">A minimal standard for verifiable actions.<br>
+    If an agent claims it acted, it should produce a receipt.</div>
+  </div>
+</header>
+
+<main>
+  <div class="controls">
+    <input id="path" placeholder="paste a chain URL or upload a JSONL file"
+           value="">
+    <input type="file" id="file" accept=".jsonl,.json,application/jsonl,application/json"
+           style="flex:0 0 auto;">
+    <button class="primary" onclick="run()">Verify</button>
+  </div>
+  <div id="out"></div>
+</main>
+
+<div class="footer">
+  Reference impl: <a href="https://github.com/AgentBonnybb/receipt">github.com/AgentBonnybb/receipt</a>
+  · Spec v0.1 · <a href="javascript:loadDemo()">load demo chain</a>
+</div>
+
+<script>
+// ── Receipt v0.1 verifier (client-side; no server needed for static check) ──
+
+const HASH_PREFIX = "sha256:";
+const GENESIS_PREV = HASH_PREFIX + "0".repeat(64);
+const CANONICAL_KEYS = ["v","schema_version","ts","seq","agent","kind","data","prev_hash"];
+const TIER_W = { exchange_realtime:1, exchange_delayed:0.7, api_verified:0.7, backfill_local:0.3, manual:0 };
+
+async function sha256(text) {
+  const buf = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2,"0")).join("");
+}
+
+function canonical(ev) {
+  const body = {};
+  for (const k of CANONICAL_KEYS) if (k in ev) body[k] = ev[k];
+  return jsonCanonical(body);
+}
+
+function jsonCanonical(v) {
+  if (v === null) return "null";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "number") return JSON.stringify(v);
+  if (typeof v === "string") return JSON.stringify(v);
+  if (Array.isArray(v)) return "[" + v.map(jsonCanonical).join(",") + "]";
+  const keys = Object.keys(v).sort();
+  return "{" + keys.map(k => JSON.stringify(k)+":"+jsonCanonical(v[k])).join(",") + "}";
+}
+
+async function verifyChain(events) {
+  if (events.length === 0) return { status:"EMPTY", n_events:0, n_claims:0, n_verified:0, n_errors:0, n_rejected:0, issues:[] };
+  let prev = GENESIS_PREV, expectedSeq = 0;
+  const claims = new Set(), verified = new Set(), errors = new Set(), rejected = new Set(), suspect = new Set();
+  let lastReconTs = null, lastEventTs = null;
+  const issues = [];
+  for (const ev of events) {
+    if (ev.seq !== expectedSeq) { issues.push(`seq gap at ${expectedSeq} got ${ev.seq}`); return verdict("INVALID_CHAIN", events, claims, verified, errors, rejected, issues); }
+    if (ev.prev_hash !== prev) { issues.push(`prev_hash mismatch at seq ${expectedSeq}`); return verdict("INVALID_CHAIN", events, claims, verified, errors, rejected, issues); }
+    const recomputed = HASH_PREFIX + await sha256(canonical(ev));
+    if (ev.hash !== recomputed) { issues.push(`hash mismatch at seq ${expectedSeq}`); return verdict("INVALID_CHAIN", events, claims, verified, errors, rejected, issues); }
+    const d = ev.data || {};
+    if (ev.kind === "claim") claims.add(ev.seq);
+    else if (ev.kind === "verified") { if (d.claim_seq != null) { verified.add(d.claim_seq); if (!(d.match||{}).id_match) suspect.add(d.claim_seq); } }
+    else if (ev.kind === "error") { if (d.claim_seq != null) errors.add(d.claim_seq); }
+    else if (ev.kind === "signal_rejected") rejected.add(ev.seq);
+    else if (ev.kind === "reconciliation") lastReconTs = ev.ts;
+    lastEventTs = ev.ts;
+    prev = ev.hash;
+    expectedSeq++;
+  }
+  if (suspect.size > 0) { issues.push(`${suspect.size} verified event(s) with id_match=false`); return verdict("SUSPECT_VERIFICATION", events, claims, verified, errors, rejected, issues); }
+  const terminated = new Set([...verified, ...errors]);
+  const unmatched = [...claims].filter(c => !terminated.has(c));
+  if (unmatched.length > 0) { issues.push(`${unmatched.length} claim(s) without termination`); return verdict("UNVERIFIED_CLAIM", events, claims, verified, errors, rejected, issues); }
+  if (claims.size > 0) {
+    if (lastReconTs == null) { issues.push("no reconciliation event"); return verdict("STALE_RECONCILIATION", events, claims, verified, errors, rejected, issues); }
+    if (lastEventTs - lastReconTs > 6*3600*1000) { issues.push(`reconciliation gap > 6h`); return verdict("STALE_RECONCILIATION", events, claims, verified, errors, rejected, issues); }
+  }
+  return verdict("VERIFIED", events, claims, verified, errors, rejected, []);
+}
+
+function verdict(status, events, claims, verified, errors, rejected, issues) {
+  return { status, n_events:events.length, n_claims:claims.size, n_verified:[...claims].filter(c=>verified.has(c)).length, n_errors:errors.size, n_rejected:rejected.size, issues };
+}
+
+function trustScore(events, report) {
+  if (report.status === "INVALID_CHAIN" || report.status === "BROKEN_ANCHOR") return { score:0, grade:"F", components:{} };
+  const verifs = events.filter(e => e.kind === "verified");
+  const idMatchRate = verifs.length ? verifs.filter(e => (e.data.match||{}).id_match).length/verifs.length : 0;
+  const tierEvents = events.filter(e => ["verified","reconciliation"].includes(e.kind));
+  const tierAvg = tierEvents.length ? tierEvents.reduce((s,e) => s + (TIER_W[e.data.trust_tier] ?? 0), 0)/tierEvents.length : 0;
+  const anchors = events.filter(e => e.kind === "anchor");
+  const lastAnchor = anchors[anchors.length-1];
+  const lastTs = events[events.length-1]?.ts || 0;
+  const permanent = ["ipfs","arweave","ethereum","btc_op_return"];
+  let anchorFresh = 0;
+  if (lastAnchor) {
+    const ageH = (lastTs - lastAnchor.ts)/3600000;
+    const isPerm = permanent.includes(lastAnchor.data.anchor_kind);
+    const cap = isPerm ? 1 : 0.5;
+    anchorFresh = ageH <= 24 ? cap : ageH <= 168 ? 0.5*cap : 0;
+  }
+  const recons = events.filter(e => e.kind === "reconciliation");
+  let maxGapH = 0;
+  if (recons.length > 0) {
+    let prevTs = events[0].ts;
+    for (const r of recons) { maxGapH = Math.max(maxGapH, (r.ts-prevTs)/3600000); prevTs = r.ts; }
+    maxGapH = Math.max(maxGapH, (lastTs-prevTs)/3600000);
+  } else maxGapH = 999;
+  const reconScore = Math.max(0, Math.min(1, 1 - (maxGapH-6)/18));
+  const errorEvents = events.filter(e => e.kind === "error").length;
+  const attempted = errorEvents + verifs.length;
+  let errScore = 0.5;
+  if (attempted === 0) errScore = 0.5;
+  else { const rate = errorEvents/attempted; errScore = errorEvents===0 ? 0.4 : rate<=0.1 ? 1 : rate<=0.25 ? 0.7 : 0.3; }
+  const heartbeats = events.filter(e => e.kind === "heartbeat").length;
+  const totalEvents = events.length;
+  const liveness = totalEvents > 0 ? Math.min(1, heartbeats/Math.max(1, totalEvents/10)) : 0;
+
+  const components = {
+    id_match_rate:      { weight:50, raw:+idMatchRate.toFixed(2), contribution:+(50*idMatchRate).toFixed(1) },
+    trust_tier_quality: { weight:20, raw:+tierAvg.toFixed(2),     contribution:+(20*tierAvg).toFixed(1) },
+    anchor_freshness:   { weight:10, raw:+anchorFresh.toFixed(2), contribution:+(10*anchorFresh).toFixed(1) },
+    reconciliation:     { weight:10, raw:+reconScore.toFixed(2),  contribution:+(10*reconScore).toFixed(1) },
+    error_transparency: { weight:5,  raw:+errScore.toFixed(2),    contribution:+(5*errScore).toFixed(1) },
+    liveness:           { weight:5,  raw:+liveness.toFixed(2),    contribution:+(5*liveness).toFixed(1) },
+  };
+  let score = Object.values(components).reduce((s,c) => s+c.contribution, 0);
+  // deductions
+  const deductions = [];
+  const suspectCount = verifs.filter(e => !((e.data.match||{}).id_match)).length;
+  if (suspectCount > 0) { const d = Math.min(30, 10*suspectCount); deductions.push({reason:`${suspectCount} verified with id_match=false`, minus:d}); score -= d; }
+  if (report.status === "SUSPECT_VERIFICATION") score = Math.min(score, 50);
+  if (report.status === "STALE_RECONCILIATION") score = Math.min(score, 70);
+  score = Math.max(0, Math.round(score));
+  const grade = score >= 90 ? "A" : score >= 75 ? "B" : score >= 60 ? "C" : score >= 40 ? "D" : "F";
+  return { score, grade, components, deductions };
+}
+
+async function run() {
+  const file = document.getElementById("file").files[0];
+  const url = document.getElementById("path").value.trim();
+  let text;
+  try {
+    if (file) text = await file.text();
+    else if (url) { const r = await fetch(url); text = await r.text(); }
+    else { document.getElementById("out").innerHTML = "<div class='verdict'>Paste a URL or upload a JSONL file.</div>"; return; }
+  } catch (e) { document.getElementById("out").innerHTML = `<div class='verdict'>Fetch failed: ${e.message}</div>`; return; }
+  const events = text.split("\n").filter(l => l.trim()).map(l => JSON.parse(l));
+  const report = await verifyChain(events);
+  const score = trustScore(events, report);
+  render(events, report, score);
+}
+
+function render(events, report, score) {
+  const icon = report.status === "VERIFIED" ? "✅" : "❌";
+  const counts = events.reduce((m,e) => (m[e.kind]=(m[e.kind]||0)+1, m), {});
+  const tiers = events.reduce((m,e) => { const t=(e.data||{}).trust_tier; if(t)m[t]=(m[t]||0)+1; return m; }, {});
+  let html = `<div class="verdict ${report.status}">
+    <div class="badge"><span class="icon">${icon}</span>${report.status}</div>
+    <div class="grid">
+      <div class="stat"><div class="label">trust score</div><div class="score ${score.grade}">${score.score}<span style="font-size:18px;color:var(--muted);"> ${score.grade}</span></div></div>
+      <div class="stat"><div class="label">events</div><div class="value">${report.n_events}</div></div>
+      <div class="stat"><div class="label">claims</div><div class="value">${report.n_claims}</div></div>
+      <div class="stat"><div class="label">verified</div><div class="value">${report.n_verified}</div></div>
+      <div class="stat"><div class="label">errors</div><div class="value">${report.n_errors}</div></div>
+      <div class="stat"><div class="label">rejected</div><div class="value">${report.n_rejected}</div></div>
+    </div>`;
+  if (report.issues.length) html += `<div style="margin-top:16px;color:var(--red);">Issues:<ul>${report.issues.map(i=>`<li>${i}</li>`).join("")}</ul></div>`;
+  html += `<div class="breakdown" style="margin-top:24px;"><strong>Trust score breakdown:</strong>`;
+  for (const [k,v] of Object.entries(score.components)) html += `<div class="row"><span>${k} (×${v.weight})</span><span>${v.raw} → +${v.contribution}</span></div>`;
+  for (const d of (score.deductions||[])) html += `<div class="row" style="color:var(--red);"><span>${d.reason}</span><span>−${d.minus}</span></div>`;
+  html += `</div>`;
+  if (Object.keys(tiers).length) {
+    html += `<div class="breakdown" style="margin-top:16px;"><strong>Trust tiers:</strong>`;
+    for (const [t,n] of Object.entries(tiers).sort((a,b)=>b[1]-a[1])) html += `<div class="row"><span>${t}</span><span>${n}</span></div>`;
+    html += `</div>`;
+  }
+  html += `</div>`;
+  html += `<div class="verdict"><strong>Events by kind</strong><div class="grid">`;
+  for (const [k,n] of Object.entries(counts).sort()) html += `<div class="stat"><div class="label kind ${k}">${k}</div><div class="value">${n}</div></div>`;
+  html += `</div>`;
+  html += `<details><summary>last 20 events</summary><div class="events">`;
+  for (const ev of events.slice(-20)) html += `<div class="row"><span class="kind ${ev.kind}">${ev.kind}</span><span>seq ${ev.seq}</span><span>${new Date(ev.ts).toISOString()}</span></div>`;
+  html += `</div></details>`;
+  html += `<details><summary>raw chain head</summary><pre>${JSON.stringify(events[events.length-1],null,2)}</pre></details></div>`;
+  document.getElementById("out").innerHTML = html;
+}
+
+function loadDemo() {
+  document.getElementById("path").value = "https://raw.githubusercontent.com/AgentBonnybb/receipt/main/examples/sample.receipt.jsonl";
+  alert("Click Verify (note: until the repo is pushed to GitHub, paste a local file via the upload button instead)");
+}
+</script>
+</body>
+</html>
