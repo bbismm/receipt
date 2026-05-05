@@ -241,6 +241,11 @@ function render(events, report, score) {
       <div class="stat"><div class="label">rejected</div><div class="value">${report.n_rejected}</div></div>
     </div>`;
   if (report.issues.length) html += `<div style="margin-top:16px;color:var(--red);">Issues:<ul>${report.issues.map(i=>`<li>${i}</li>`).join("")}</ul></div>`;
+  html += `<div style="margin-top:16px;padding:10px;border-radius:6px;background:rgba(63,185,80,0.06);border:1px solid var(--green);font-size:12px;color:var(--muted);">
+    🔒 <strong style="color:var(--green);">Verified locally in your browser.</strong>
+    All ${report.n_events} event hashes were recomputed via <code>crypto.subtle.digest('SHA-256')</code>
+    on this page — no server, no API call. Right-click → View Source to read the verifier.
+  </div>`;
   html += `<div class="breakdown" style="margin-top:24px;"><strong>Trust score breakdown:</strong>`;
   for (const [k,v] of Object.entries(score.components)) html += `<div class="row"><span>${k} (×${v.weight})</span><span>${v.raw} → +${v.contribution}</span></div>`;
   for (const d of (score.deductions||[])) html += `<div class="row" style="color:var(--red);"><span>${d.reason}</span><span>−${d.minus}</span></div>`;

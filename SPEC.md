@@ -201,6 +201,7 @@ ENUM:
 | `exchange_delayed`  | Re-fetched but stale (5 min – 24h) |
 | `api_verified`      | Different authoritative API (on-chain explorer, signed broker statement) |
 | `backfill_local`    | Reconstructed from operator's local DB / logs |
+| `backfill_public`   | **Reconstructed by a third party** from publicly-observable data of an operator who did not themselves publish a Receipt chain (e.g. their public PnL screenshots, their open positions from on-chain data). Identifies "shadow receipts" — third-party-attested, lower trust than operator-attested but not zero |
 | `manual`            | Operator-attested, no programmatic source |
 
 No default value. Implementations MUST set it explicitly.
