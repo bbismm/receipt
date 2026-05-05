@@ -18,6 +18,7 @@ Quick start:
 """
 from receipt.core import Receipt
 from receipt.chain import compute_hash, verify_chain, ChainStatus
+from receipt.score import compute_score
 
 __version__ = "0.1.0"
-__all__ = ["Receipt", "compute_hash", "verify_chain", "ChainStatus"]
+__all__ = ["Receipt", "compute_hash", "verify_chain", "ChainStatus", "compute_score"]
