@@ -112,12 +112,22 @@
 // All hashes recomputed via crypto.subtle.digest('SHA-256') on this page.
 // Server only hosts this static HTML and the JSONL data.
 
+const SCORE_SCHEMA_VERSION = "0.1.1";
 const HASH_PREFIX = "sha256:";
 const GENESIS_PREV = HASH_PREFIX + "0".repeat(64);
 const CANONICAL_KEYS = ["v","schema_version","ts","seq","agent","kind","data","prev_hash"];
-const PERMANENT_ANCHORS = new Set(["ipfs","arweave","ethereum","btc_op_return"]);
+const PERMANENT_ANCHORS_TIER = new Set(["btc_op_return","ethereum","arweave"]);
+const SEMI_PERM_ANCHORS_TIER = new Set(["ipfs"]);
+const SOCIAL_ANCHORS_TIER = new Set(["twitter","moltbook","github_commit"]);
 const REALTIME_TIERS = new Set(["exchange_realtime","exchange_delayed","api_verified"]);
 const HEARTBEAT_BUCKET_MS = 5*60*1000;
+const DEFAULT_WINDOW_MS = 7*24*3600*1000;
+function anchorTier(kind) {
+  if (PERMANENT_ANCHORS_TIER.has(kind)) return "permanent";
+  if (SEMI_PERM_ANCHORS_TIER.has(kind)) return "semi_permanent";
+  if (SOCIAL_ANCHORS_TIER.has(kind)) return "social";
+  return "unknown";
+}
 
 async function sha256hex(text) {
   const buf = new TextEncoder().encode(text);
@@ -207,14 +217,21 @@ function computeScore(events, report) {
   const acc_score = +Math.max(0, Math.min(100, (accuracy_raw - mismatch_rate*2)*100)).toFixed(1);
   const acc_detail = receipts ? `${verified_ok}/${receipts} verified, ${mismatches} mismatch${mismatches!==1?'es':''}` : "no verified events";
 
-  // Consistency — bucket coverage
-  const first = events[0].ts, last = events[events.length-1].ts;
-  const span = Math.max(last-first, HEARTBEAT_BUCKET_MS);
+  // Consistency — bucket coverage over EXTERNAL window (default last 7d
+  // from chain head). Per SPEC §2.3 the window must NOT come from the chain.
+  const last = events[events.length-1].ts;
+  const windowEnd = last;
+  const windowStart = windowEnd - DEFAULT_WINDOW_MS;
+  const span = Math.max(windowEnd - windowStart, HEARTBEAT_BUCKET_MS);
   const totalBuckets = Math.max(1, Math.floor(span/HEARTBEAT_BUCKET_MS));
-  const buckets = new Set(events.map(e=>Math.floor((e.ts-first)/HEARTBEAT_BUCKET_MS)).filter(b=>b>=0&&b<totalBuckets));
+  const buckets = new Set();
+  for (const e of events) {
+    const b = Math.floor((e.ts - windowStart) / HEARTBEAT_BUCKET_MS);
+    if (b >= 0 && b < totalBuckets) buckets.add(b);
+  }
   const cons_ratio = buckets.size / totalBuckets;
   const cons_score = +Math.min(cons_ratio*100, 100).toFixed(1);
-  const cons_detail = `covered ${buckets.size}/${totalBuckets} 5-min buckets in window`;
+  const cons_detail = `covered ${buckets.size}/${totalBuckets} 5-min buckets in ${(span/3600000).toFixed(0)}h window`;
 
   // Transparency
   let trans_score = 100;
@@ -226,20 +243,24 @@ function computeScore(events, report) {
   trans_score = Math.max(0, trans_score);
   const trans_detail = trans_notes.length ? trans_notes.join("; ") : "all transparency criteria met";
 
-  // Integrity
+  // Integrity — explicit anchor tiering (SPEC §2.5)
   const anchors = events.filter(e=>e.kind==="anchor");
-  let int_score = 100;
-  let int_detail = "chain valid";
-  if (anchors.length === 0) { int_score = 50; int_detail = "no anchor event"; }
+  let int_score = 100, int_detail = "chain valid", anchorMeta = {tier: null};
+  if (anchors.length === 0) { int_score = 50; int_detail = "no anchor event"; anchorMeta.tier = null; }
   else {
     const a = anchors[anchors.length-1];
+    const kind = a.data.anchor_kind || "";
+    const tier = anchorTier(kind);
+    anchorMeta.tier = tier; anchorMeta.kind = kind;
     const ageH = (last - a.ts)/3600000;
-    const isPerm = PERMANENT_ANCHORS.has(a.data.anchor_kind);
-    if (!isPerm) { int_score -= 10; }
-    if (ageH > 24) int_score -= 30;
-    if (ageH > 168) int_score = Math.min(int_score, 30);
+    const notes = [];
+    if (tier === "social") { int_score = Math.min(int_score, 90); notes.push(`social tier (${kind}) capped 90`); }
+    else if (tier === "semi_permanent") { int_score = Math.min(int_score, 95); notes.push(`semi-permanent (${kind}) capped 95`); }
+    else if (tier === "unknown") { int_score = Math.min(int_score, 80); notes.push(`unknown anchor (${kind}) capped 80`); }
+    if (ageH > 24) { int_score -= 30; notes.push(`anchor ${ageH.toFixed(1)}h old (−30)`); }
+    if (ageH > 168) { int_score = Math.min(int_score, 30); notes.push("anchor > 7d cap 30"); }
     int_score = Math.max(0, Math.min(100, int_score));
-    int_detail = `anchor ${ageH.toFixed(1)}h ago on ${a.data.anchor_kind}` + (!isPerm ? " (social-only −10)" : "");
+    int_detail = `anchor ${ageH.toFixed(1)}h ago on ${kind} [tier=${tier}]` + (notes.length ? "; " + notes.join("; ") : "");
   }
 
   const dims = {
@@ -294,12 +315,40 @@ function computeScore(events, report) {
   }
   for (const c of [...claims].filter(c=>!terminated.has(c)).slice(0,5)) exMissing.push({seq:c});
 
+  // Suspicion flags (SPEC §2.6) — additive, do NOT affect score
+  const suspicion = [];
+  if (claims.size >= 20 && errCount === 0) suspicion.push("too_perfect_no_errors");
+  if (DEFAULT_WINDOW_MS > 24*3600000) {
+    let maxGap = 0;
+    for (let i=1; i<events.length; i++) maxGap = Math.max(maxGap, (events[i].ts - events[i-1].ts)/3600000);
+    if (maxGap > 24) suspicion.push("sudden_activity_gap");
+  }
+  if (verifs.length >= 10) {
+    for (let i=0; i<=verifs.length-10; i++) {
+      const win = verifs.slice(i, i+10);
+      const mm = win.filter(e => !((e.data.match||{}).id_match)).length;
+      if (mm >= 3) { suspicion.push("high_mismatch_cluster"); break; }
+    }
+  }
+  const tierCounts = {};
+  for (const e of events) {
+    const t = (e.data||{}).trust_tier;
+    if (t) tierCounts[t] = (tierCounts[t]||0)+1;
+  }
+  const bf = tierCounts.backfill_local||0, rt = tierCounts.exchange_realtime||0;
+  if (bf > 0 && rt > 0 && bf > rt*5) suspicion.push("backfill_dominant_pretending_realtime");
+  if (anchors.length > 0 && anchors.every(a => anchorTier(a.data.anchor_kind||"") === "social")) suspicion.push("anchor_only_social");
+  if (DEFAULT_WINDOW_MS > 24*3600000 && !events.some(e=>e.kind==="heartbeat")) suspicion.push("heartbeat_silence");
+
   return {
+    schema_version: SCORE_SCHEMA_VERSION,
+    window: {from_ms: windowStart, to_ms: windowEnd, source: "default_last_7d"},
     verdict, verdict_color: color, score, raw_score_pre_clamp: raw,
     trust_tier_majority: tierMaj,
     dimensions: dims,
     summary: {total_claims: claims.size, receipts, verified: verified_ok, mismatch: mismatches, errors: errCount},
     flags,
+    suspicion_flags: suspicion,
     examples: {mismatch: exMismatch.slice(0,5), missing_receipts: exMissing},
   };
 }
@@ -367,6 +416,17 @@ function render(events, report, score, elapsedMs) {
   if (score.flags && score.flags.length) {
     html += `<div class="section"><h3>Flags</h3><div class="flags">`;
     for (const f of score.flags) html += `<span class="flag">${f}</span>`;
+    html += `</div></div>`;
+  }
+
+  // Suspicion flags — separate from score, human-intuition layer (SPEC §2.6)
+  if (score.suspicion_flags && score.suspicion_flags.length) {
+    html += `<div class="section" style="border-color:var(--orange);">
+      <h3 style="color:var(--orange);">⚠ Suspicion (does NOT affect score, but worth your attention)</h3>
+      <div class="flags">`;
+    for (const f of score.suspicion_flags) {
+      html += `<span class="flag" style="border-color:var(--orange);background:rgba(219,109,40,0.15);color:var(--orange);">${f}</span>`;
+    }
     html += `</div></div>`;
   }
 

@@ -12,8 +12,19 @@ from typing import Iterable
 
 from receipt.chain import ChainStatus, VerifyReport, verify_chain
 
-PERMANENT_ANCHOR_KINDS = frozenset({"ipfs", "arweave", "ethereum", "btc_op_return"})
+PERMANENT_ANCHORS = frozenset({"btc_op_return", "ethereum", "arweave"})
+SEMI_PERMANENT_ANCHORS = frozenset({"ipfs"})
+SOCIAL_ANCHORS = frozenset({"twitter", "moltbook", "github_commit"})
 HEARTBEAT_BUCKET_MS = 5 * 60 * 1000  # 5 min
+DEFAULT_WINDOW_MS = 7 * 24 * 3600 * 1000  # 7 days
+SCHEMA_VERSION = "0.1.1"
+
+
+def _anchor_tier(kind: str) -> str:
+    if kind in PERMANENT_ANCHORS: return "permanent"
+    if kind in SEMI_PERMANENT_ANCHORS: return "semi_permanent"
+    if kind in SOCIAL_ANCHORS: return "social"
+    return "unknown"
 
 
 def _coverage(events: list[dict]) -> tuple[float, str, dict]:
@@ -52,19 +63,23 @@ def _accuracy(events: list[dict]) -> tuple[float, str, dict]:
     }
 
 
-def _consistency(events: list[dict]) -> tuple[float, str, dict]:
-    if len(events) < 2:
-        return 100.0, "single event window", {}
-    first_ts = events[0]["ts"]
-    last_ts = events[-1]["ts"]
-    span_ms = max(last_ts - first_ts, HEARTBEAT_BUCKET_MS)
+def _consistency(events: list[dict], window_start_ms: int, window_end_ms: int) -> tuple[float, str, dict]:
+    """Consistency over an EXTERNAL window — caller-supplied or default
+    last_7d_ending_at_chain_head. Never trust the chain's own [first, last]
+    span: an attacker can omit early events to shrink the window and inflate
+    density. SPEC §2.3."""
+    span_ms = max(window_end_ms - window_start_ms, HEARTBEAT_BUCKET_MS)
     total_buckets = max(1, span_ms // HEARTBEAT_BUCKET_MS)
-    covered = {((e["ts"] - first_ts) // HEARTBEAT_BUCKET_MS) for e in events}
-    covered_n = len([b for b in covered if 0 <= b < total_buckets])
-    ratio = covered_n / total_buckets
+    covered: set[int] = set()
+    for e in events:
+        bucket = (e["ts"] - window_start_ms) // HEARTBEAT_BUCKET_MS
+        if 0 <= bucket < total_buckets:
+            covered.add(bucket)
+    ratio = len(covered) / total_buckets
     score = round(min(ratio * 100, 100), 1)
-    detail = f"covered {covered_n}/{total_buckets} 5-min buckets in window"
-    return score, detail, {"covered": covered_n, "total": total_buckets, "ratio": ratio}
+    detail = f"covered {len(covered)}/{total_buckets} 5-min buckets in {(span_ms/3600000):.1f}h window"
+    return score, detail, {"covered": len(covered), "total": total_buckets, "ratio": ratio,
+                            "window_start_ms": window_start_ms, "window_end_ms": window_end_ms}
 
 
 def _transparency(events: list[dict]) -> tuple[float, str, dict]:
@@ -91,30 +106,40 @@ def _transparency(events: list[dict]) -> tuple[float, str, dict]:
 
 
 def _integrity(events: list[dict], report: VerifyReport) -> tuple[float, str, dict]:
+    """SPEC §2.5 — explicit anchor tiering: permanent / semi_permanent / social."""
     if report.status == ChainStatus.INVALID_CHAIN:
         return 0.0, "hash chain broken", {"chain_status": report.status.value}
     anchors = [e for e in events if e["kind"] == "anchor"]
     if not anchors:
-        return 50.0, "no anchor event present", {"chain_status": report.status.value}
+        return 50.0, "no anchor event present", {"chain_status": report.status.value, "tier": None}
     last_anchor = anchors[-1]
-    is_permanent = last_anchor["data"].get("anchor_kind") in PERMANENT_ANCHOR_KINDS
+    kind = last_anchor["data"].get("anchor_kind", "")
+    tier = _anchor_tier(kind)
     last_event_ts = events[-1]["ts"]
     age_h = (last_event_ts - last_anchor["ts"]) / 3_600_000
-    score = 100
+
+    base = 100
     notes: list[str] = []
-    if not is_permanent:
-        notes.append("social-only anchor (−10)")
-        score -= 10
+    if tier == "social":
+        base = min(base, 90)
+        notes.append(f"social tier ({kind}) — capped at 90")
+    elif tier == "semi_permanent":
+        base = min(base, 95)
+        notes.append(f"semi-permanent tier ({kind}) — capped at 95")
+    elif tier == "unknown":
+        base = min(base, 80)
+        notes.append(f"unknown anchor_kind ({kind}) — capped at 80")
+    # else permanent — no cap
+
     if age_h > 24:
-        score -= 30
+        base -= 30
         notes.append(f"anchor age {age_h:.1f}h (−30)")
     if age_h > 24 * 7:
-        score = min(score, 30)
-        notes.append("anchor > 7 days (cap 30)")
-    score = max(0, min(score, 100))
-    detail = (f"anchor {age_h:.1f}h ago on {last_anchor['data'].get('anchor_kind')}"
-              + (f"; {'; '.join(notes)}" if notes else ""))
-    return float(score), detail, {"age_hours": age_h, "is_permanent": is_permanent}
+        base = min(base, 30)
+        notes.append("anchor > 7d (cap 30)")
+    score = max(0, min(100, base))
+    detail = f"anchor {age_h:.1f}h ago on {kind} [tier={tier}]" + (f"; {'; '.join(notes)}" if notes else "")
+    return float(score), detail, {"age_hours": age_h, "tier": tier, "anchor_kind": kind}
 
 
 def _flags(events: list[dict], dims: dict, accuracy_meta: dict) -> list[str]:
@@ -133,6 +158,60 @@ def _flags(events: list[dict], dims: dict, accuracy_meta: dict) -> list[str]:
         age_h = (events[-1]["ts"] - anchors[-1]["ts"]) / 3_600_000
         if age_h > 24:
             flags.append("anchor_stale")
+    return flags
+
+
+def _suspicion_flags(events: list[dict], summary: dict, window_ms: int) -> list[str]:
+    """SPEC §2.6 — additive flags, do NOT affect score. Surface human-intuition
+    patterns the score can miss."""
+    flags: list[str] = []
+
+    # too_perfect_no_errors
+    if summary.get("total_claims", 0) >= 20 and summary.get("errors", 0) == 0:
+        flags.append("too_perfect_no_errors")
+
+    # sudden_activity_gap — any pair of consecutive events with >24h gap
+    # (only relevant if window itself spans >24h)
+    if window_ms > 24 * 3_600_000:
+        max_gap_h = 0
+        for a, b in zip(events, events[1:]):
+            gap_h = (b["ts"] - a["ts"]) / 3_600_000
+            max_gap_h = max(max_gap_h, gap_h)
+        if max_gap_h > 24:
+            flags.append("sudden_activity_gap")
+
+    # high_mismatch_cluster — ≥3 mismatches in any rolling 10-verified window
+    verifs = [e for e in events if e["kind"] == "verified"]
+    if len(verifs) >= 10:
+        for i in range(len(verifs) - 9):
+            window = verifs[i:i + 10]
+            mismatch = sum(1 for e in window if not (e["data"].get("match") or {}).get("id_match"))
+            if mismatch >= 3:
+                flags.append("high_mismatch_cluster")
+                break
+
+    # backfill_dominant_pretending_realtime — backfill > 5× realtime
+    counts: dict[str, int] = {}
+    for e in events:
+        t = (e.get("data") or {}).get("trust_tier")
+        if t:
+            counts[t] = counts.get(t, 0) + 1
+    backfill = counts.get("backfill_local", 0)
+    realtime = counts.get("exchange_realtime", 0)
+    if backfill > 0 and (realtime == 0 or backfill > realtime * 5):
+        if realtime > 0:  # only flag if chain MIXES — pure-backfill is honest about itself
+            flags.append("backfill_dominant_pretending_realtime")
+
+    # anchor_only_social — every anchor in window is tier social
+    anchors_in_window = [e for e in events if e["kind"] == "anchor"]
+    if anchors_in_window and all(_anchor_tier(a["data"].get("anchor_kind", "")) == "social"
+                                  for a in anchors_in_window):
+        flags.append("anchor_only_social")
+
+    # heartbeat_silence — window > 24h but no heartbeat
+    if window_ms > 24 * 3_600_000 and not any(e["kind"] == "heartbeat" for e in events):
+        flags.append("heartbeat_silence")
+
     return flags
 
 
@@ -217,8 +296,17 @@ def _enforce_verdict_score_consistency(verdict: str, score: int) -> int:
     return score
 
 
-def compute_score(events: Iterable[dict], report: VerifyReport | None = None) -> dict:
-    """Return verdict + trust score per docs/trust_score.md §3 output shape."""
+def compute_score(events: Iterable[dict], report: VerifyReport | None = None,
+                  window_start_ms: int | None = None,
+                  window_end_ms: int | None = None) -> dict:
+    """Return verdict + trust score per docs/trust_score.md §3 output shape.
+
+    Window semantics (SPEC §2.3):
+        - If both window_start_ms and window_end_ms supplied → use them
+        - Else default to last 7 days ending at chain head (or chain span if
+          chain is shorter than 7 days)
+        - Window is recorded in output for transparency
+    """
     events = list(events)
     if report is None:
         report = verify_chain(events)
@@ -226,13 +314,27 @@ def compute_score(events: Iterable[dict], report: VerifyReport | None = None) ->
         return {
             "agent": None, "verdict": "Unverified", "verdict_color": "red",
             "score": 0, "dimensions": {}, "summary": {}, "flags": ["empty_chain"],
+            "suspicion_flags": [],
             "examples": {"mismatch": [], "missing_receipts": []},
             "rule_breaks": ["chain is empty"],
+            "schema_version": SCHEMA_VERSION,
         }
+
+    # Resolve window — caller-supplied OR last 7d from chain head.
+    # Critical: do NOT clip to chain_first_ts. Per SPEC §2.3, the window must
+    # be externally-anchored, otherwise an attacker omits early events to
+    # shrink the window and inflate density. New chains < 7d old correctly
+    # show lower Consistency until they accumulate real history.
+    chain_head_ts = events[-1]["ts"]
+    if window_end_ms is None:
+        window_end_ms = chain_head_ts
+    if window_start_ms is None:
+        window_start_ms = window_end_ms - DEFAULT_WINDOW_MS
+    window_ms = window_end_ms - window_start_ms
 
     cov_score, cov_detail, cov_meta = _coverage(events)
     acc_score, acc_detail, acc_meta = _accuracy(events)
-    cons_score, cons_detail, cons_meta = _consistency(events)
+    cons_score, cons_detail, cons_meta = _consistency(events, window_start_ms, window_end_ms)
     trans_score, trans_detail, trans_meta = _transparency(events)
     int_score, int_detail, int_meta = _integrity(events, report)
 
@@ -258,23 +360,27 @@ def compute_score(events: Iterable[dict], report: VerifyReport | None = None) ->
         "Integrity":    {"score": int_score,   "detail": int_detail},
     }
 
+    summary = {
+        "total_claims": cov_meta.get("total", 0),
+        "receipts": acc_meta.get("receipts", 0),
+        "verified": acc_meta.get("verified_ok", 0),
+        "mismatch": acc_meta.get("mismatches", 0),
+        "errors": sum(1 for e in events if e["kind"] == "error"),
+    }
     return {
         "agent": events[0].get("agent"),
-        "window": {"from_ms": events[0]["ts"], "to_ms": events[-1]["ts"]},
+        "schema_version": SCHEMA_VERSION,
+        "window": {"from_ms": window_start_ms, "to_ms": window_end_ms,
+                   "source": "caller" if (window_end_ms != chain_head_ts) else "default_last_7d"},
         "verdict": verdict,
         "verdict_color": color,
         "score": score,
         "raw_score_pre_clamp": raw_score,
         "trust_tier_majority": tier_majority,
         "dimensions": dims,
-        "summary": {
-            "total_claims": cov_meta.get("total", 0),
-            "receipts": acc_meta.get("receipts", 0),
-            "verified": acc_meta.get("verified_ok", 0),
-            "mismatch": acc_meta.get("mismatches", 0),
-            "errors": sum(1 for e in events if e["kind"] == "error"),
-        },
+        "summary": summary,
         "flags": _flags(events, dims, acc_meta),
+        "suspicion_flags": _suspicion_flags(events, summary, window_ms),
         "examples": _examples(events),
         "chain_status": report.status.value,
     }

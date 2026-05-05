@@ -59,11 +59,18 @@ Trust Score = (Coverage + Accuracy + Consistency + Transparency + Integrity) / 5
 Each dimension is normalized to 0–100, then averaged.
 
 ### 2.1 Coverage (20)
-What share of the agent's claimed actions actually have receipts.
+What share of the agent's claimed actions reach a **terminal state** —
+i.e. paired with a `verified`, `error`, or `signal_rejected` event.
+
 ```
-coverage = count(claim with terminating verified|error|signal_rejected) / count(claim)
+coverage = count(claim_seq found in {verified.claim_seq} ∪ {error.claim_seq} ∪ {signal_rejected.seq}) / count(claim)
 score = coverage * 100
 ```
+
+**Important**: an `external_action` alone does NOT count as terminal —
+sending an order doesn't prove anything happened. Only a verified outcome,
+a recorded error, or an explicit rejection counts. This is to prevent
+"executed but never reconciled" from looking like compliance.
 
 ### 2.2 Accuracy (20)
 Of the claims with receipts, how many actually verified.
@@ -77,13 +84,22 @@ score = clamp((verified_count / receipts_count) * 100 - mismatch_rate * 200, 0, 
 Mismatch penalty is 2× — id-mismatch is fraud signal, not noise.
 
 ### 2.3 Consistency (20)
-Time-bucket coverage. Divide window into 5-minute buckets; count buckets
-containing at least one event (any kind, including heartbeat).
+Time-bucket coverage over an **externally-specified window**.
+
 ```
-covered = count(5-min buckets with ≥ 1 event)
-total   = total 5-min buckets in [first_event_ts, last_event_ts]
+window  = caller-supplied (verifier API param, viewer URL param, or default
+          to last_7_days_ending_at_chain_head)
+covered = count(5-min buckets with ≥ 1 event, in window)
+total   = total 5-min buckets in window
 score   = (covered / total) * 100
 ```
+
+**Critical: the window is NOT [first_event_ts, last_event_ts] of the chain**.
+That would let an operator omit early events to shrink the apparent window
+and inflate density. The verifier MUST use either an explicit caller
+window or a fixed default (last 7 days from chain head). The window choice
+is recorded in the output.
+
 Long unexplained silences cost points. Heartbeats are how an honest agent
 proves "I was alive and chose to take no action".
 
@@ -94,12 +110,51 @@ Starts at 100, deductions for what's NOT being reported:
 - Any `verified` event missing `match.tolerance_used`: −20
 
 ### 2.5 Integrity (20)
-Chain-level structural soundness:
-- INVALID_CHAIN (broken hash / seq): score = 0 (fatal)
-- No anchor at all: score capped at 50
-- Anchor stale (last permanent-layer anchor > 24h): −30
-- Anchor stale (> 7d): score capped at 30
-- Otherwise: 100
+Chain-level structural soundness, with explicit anchor tiering.
+
+**Anchor tiers**:
+
+| Tier | anchor_kinds | Properties |
+|---|---|---|
+| `permanent` | `btc_op_return`, `ethereum`, `arweave` | irreversible without rewriting consensus / Arweave's permaweb |
+| `semi_permanent` | `ipfs` | persists while pinned; pin loss = data loss |
+| `social` | `twitter`, `moltbook`, `github_commit` | platform-deletable / repo-rewriteable |
+
+**Score logic**:
+```
+if INVALID_CHAIN: 0    (fatal — broken hash / seq)
+else:
+    base = 100
+    if no_anchor:          base = 50
+    elif tier == social:    base capped at 90    (best a social-only chain can do)
+    elif tier == semi_permanent: base capped at 95
+    # tier == permanent → no cap
+
+    if anchor_age > 24h:   base −= 30
+    if anchor_age > 7d:    base capped at 30
+    score = max(0, min(100, base))
+```
+
+The tier-cap encodes the protocol stance: even a perfectly chained,
+flawlessly verified chain anchored only to GitHub commits cannot be a
+100/100 Integrity. A truly tamper-proof chain needs a tamper-proof anchor.
+
+## 2.6 Suspicion flags (additive; do NOT affect score)
+
+Some patterns are not score-affecting but worth surfacing — human intuition
+fills gaps the score cannot. The verifier MUST emit these as an array:
+
+| Flag | Trigger |
+|---|---|
+| `too_perfect_no_errors` | ≥20 claims with zero `error` events ever (real systems fail; perfect logs are suspicious) |
+| `sudden_activity_gap` | Any pair of consecutive events with > 24h gap, while window covers > 24h |
+| `high_mismatch_cluster` | ≥3 verified events with `id_match=false` within any rolling 10-event window |
+| `backfill_dominant_pretending_realtime` | `trust_tier=backfill_local` events outnumber `exchange_realtime` events 5:1 or more, despite chain claiming an exchange venue |
+| `anchor_only_social` | All anchors in window are tier `social` |
+| `heartbeat_silence` | Window covers > 24h but contains zero `heartbeat` events |
+
+These don't change the score, but every viewer MUST display them
+prominently. They are how humans catch what algorithms miss.
 
 ## 3. Output shape
 
@@ -112,6 +167,8 @@ Chain-level structural soundness:
   "verdict_color": "green",
 
   "score": 82,
+  "suspicion_flags": ["heartbeat_silence"],
+
   "dimensions": {
     "Coverage":     {"score": 100, "detail": "139/139 claims have receipts"},
     "Accuracy":     {"score": 100, "detail": "139/139 verified, 0 mismatches"},
