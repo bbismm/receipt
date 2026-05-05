@@ -3,85 +3,111 @@
 **Status**: draft, 2026-05-05
 **Maintainer**: iBitLabs
 **License**: CC-BY-4.0 (this spec) | MIT (reference implementation)
+**Schema version**: `1`
 
-Receipt is an open standard for **publicly-verifiable AI agent activity logs**,
-designed first for AI trading bots and copy-trading services where users need
-to verify that the bot did what it claimed.
+> Receipt is an append-only, verifiable event log for agent actions.
 
-> If your AI bot tells the public it made a trade, Receipt is the artifact
-> that lets anyone confirm the trade actually happened — without trusting you.
+## 0. Design goals
 
----
+- Make claims auditable
+- Bind actions to verifiable outcomes
+- Enable third-party verification
+- Minimize trust assumptions
 
-## 1. Design principles
+The first deployed use case is AI trading bots and copy-trading services. The
+envelope is domain-neutral: any AI agent that takes external actions can emit
+a Receipt chain.
 
-1. **Append-only, hash-chained**. Once written, an event cannot be edited
-   without breaking the chain. Daily Merkle roots get publicly anchored
-   (Twitter / Moltbook / GitHub commit) for third-party timestamping.
-2. **External truth is the arbiter, not the agent's self-report**. Every
-   `claim` event must eventually be paired with a `verified` event sourced
-   from an external API (exchange, blockchain, GitHub, etc.).
-3. **Schema is JSONL — one event per line, UTF-8, append-only**. Trivial to
-   tail, grep, ship, mirror.
-4. **Read-only by default**. Compliant tooling never mutates exchange state.
-   The spec describes verification, not execution.
-5. **Adversarial-robust**. Assumes the bot operator may try to fake or omit
-   events. The chain + external reconciliation makes silent omission
-   detectable (gap in sequence, balance drift, missing fills).
-
-## 2. Event types (v0.1)
-
-Every event has a fixed envelope:
+## 1. Event envelope (canonical)
 
 ```json
 {
   "v": "0.1",
-  "ts": "2026-05-05T14:32:00.123Z",
-  "seq": 4231,
-  "agent": "iBitLabs/sniper-v5.1",
-  "kind": "<one of: claim | external_action | verified | reconciliation | anchor>",
-  "data": { ... },
+  "schema_version": "1",
+  "ts": 1710000000000,
+  "seq": 1024,
+  "agent": "ibitlabs_agent_v3",
+  "kind": "claim",
+  "data": {},
   "prev_hash": "sha256:abc...",
   "hash": "sha256:def..."
 }
 ```
 
-`hash` = SHA-256 of canonical JSON of `{v, ts, seq, agent, kind, data, prev_hash}`,
-in that key order, no whitespace. `prev_hash` of event 0 is `sha256:` + 64 zeros.
+**`ts`** is **integer milliseconds since Unix epoch** (UTC). 13 digits.
+Sub-second precision matters for trading; ms is the cross-language default
+(JavaScript Date, Rust SystemTime, Java Instant). All times in `data.*`
+fields are also ms unless explicitly suffixed otherwise.
 
-### 2.1 `claim` — what the agent says it's about to do
+**`schema_version`** is the spec schema version. v0.1 ships schema_version `1`.
+
+**`hash`** = SHA-256 of canonical JSON of
+`{v, schema_version, ts, seq, agent, kind, data, prev_hash}` — see §8.
+
+`prev_hash` of `seq=0` is `"sha256:" + 64 zeros`.
+
+## 2. Event kinds
+
+```
+claim               # 声明：agent 要做什么
+external_action     # 外部执行：下单 / API call / git push / tx
+verified            # 第三方验证：external truth 复核
+reconciliation      # 对账：周期性全状态盘点
+anchor              # 上链 / 外部锚定
+error               # 执行失败：必须有
+heartbeat           # 系统活跃：必须有
+signal_rejected     # 决策被拒：可选
+```
+
+**Hard rule**: every `claim` MUST eventually terminate in one of:
+- `verified` (success path)
+- `error` (failure path)
+- `signal_rejected` (proposed but blocked)
+- `reconciliation` event covering its period (catch-up after gap)
+
+Silent drop is non-conforming.
+
+## 3. Claim → verification flow
+
+Success path:
+```
+claim → external_action → verified → reconciliation → anchor
+```
+
+Failure paths:
+```
+claim → error
+claim → signal_rejected
+```
+
+## 4. `claim` event
 
 ```json
 {
   "kind": "claim",
   "data": {
-    "action": "open_short",
-    "symbol": "SOL-USD-PERPETUAL",
-    "size": 0.092,
-    "price_intended": 108.42,
-    "stop_loss": 113.84,
-    "take_profit": 105.40,
-    "reasoning": ["stoch_rsi K=18.3", "near lower BB"],
-    "reasoning_uri": "ipfs://Qm...",
-    "ai": {
-      "model": "claude-opus-4-7",
-      "provider": "anthropic",
-      "decision_mode": "rule_based"
-    }
+    "action": "open_long",
+    "symbol": "BTC-USD",
+    "side": "buy",
+    "size": 0.1,
+    "price_intended": 67000.0,
+    "stop_loss": 65000.0,
+    "take_profit": 70000.0,
+    "ai": { ... see §6 ... }
   }
 }
 ```
 
-Required: `action`. Everything else conditional on action type.
+Required: `action`. Other fields domain-specific.
 
-### 2.2 `external_action` — the external call that supposedly executes the claim
+## 5. `external_action` event
 
 ```json
 {
   "kind": "external_action",
   "data": {
-    "claim_seq": 4230,
-    "venue": "coinbase_intx",
+    "claim_seq": 1024,
+    "venue": "coinbase",
     "request": {
       "endpoint": "/api/v3/brokerage/orders",
       "method": "POST",
@@ -89,152 +115,344 @@ Required: `action`. Everything else conditional on action type.
     },
     "response": {
       "status": 200,
-      "order_id": "1a2b3c4d-..."
+      "order_id": "abc123",
+      "execution_id": "def456"
     }
   }
 }
 ```
 
-`claim_seq` links back to the originating claim. `body_hash` lets verifiers
-confirm the claim translated to the actual order without leaking secrets.
+`response.order_id` / `response.execution_id` are the **identity anchor**
+for later `verified` events.
 
-### 2.3 `verified` — external truth says this is what happened
+## 6. AI metadata
+
+```json
+{
+  "model": "gpt-5",
+  "provider": "openai",
+  "decision_mode": "auto",
+  "prompt_hash": "sha256:xxx",
+  "temperature": 0.2,
+  "tokens_used": 512,
+  "agent_version": "3.2.1"
+}
+```
+
+**Design principle**: do NOT store the prompt itself (privacy + cost).
+Store `prompt_hash` so an auditor with access to the operator's prompt
+template can verify it matches.
+
+`agent_version` is REQUIRED for any AI-emitting agent. Without it,
+"the model drifted" is unfalsifiable.
+
+For rule-based agents: `decision_mode: "rule_based"`,
+`agent_version` required, prompt_hash/temperature/tokens_used MAY be omitted.
+
+## 7. `verified` event + match object
 
 ```json
 {
   "kind": "verified",
   "data": {
-    "claim_seq": 4230,
-    "action_seq": 4231,
-    "source": "coinbase_intx",
+    "claim_seq": 1024,
+    "action_seq": 1025,
+    "source": "coinbase",
     "source_endpoint": "/api/v3/brokerage/orders/historical/{id}",
-    "fill_price": 108.41,
-    "filled_size": 0.092,
-    "fill_ts": "2026-05-05T14:32:01.847Z",
+    "trust_tier": "exchange_realtime",
+    "fill_price": 67012.5,
+    "filled_size": 0.1,
+    "fill_ts": 1710000003000,
     "match": {
-      "size": true,
-      "side": true,
-      "price_within_tolerance": true,
-      "timing_within_tolerance": true
+      "symbol": "BTC-USD",
+      "side": "buy",
+      "size": 0.1,
+      "price_match": true,
+      "time_match": true,
+      "id_match": true,
+      "tolerance_used": {
+        "price": 0.002,
+        "time_ms": 5000
+      }
     }
   }
 }
 ```
 
-A receipt is **verified** when every `claim` has a corresponding `verified`
-event whose `match` object is all-true.
+**Match-completeness rule**:
+- `id_match` MUST be `true` — order_id or execution_id matches the
+  external_action. **Identity binding takes priority over price.**
+- `symbol` MUST be present
+- `tolerance_used` MUST be recorded — without it, tolerance can be
+  retroactively widened to mask mismatches
 
-### 2.4 `reconciliation` — periodic full-state check
+Verifiers SHOULD treat `id_match: false` as `SUSPECT_VERIFICATION` regardless
+of price match.
+
+## 8. Trust tier (mandatory ENUM)
+
+Every `verified` and `reconciliation` event MUST carry `data.trust_tier`,
+ENUM:
+
+| Tier | Source |
+|---|---|
+| `exchange_realtime` | Re-fetched from authoritative venue API < 5 min ago |
+| `exchange_delayed`  | Re-fetched but stale (5 min – 24h) |
+| `api_verified`      | Different authoritative API (on-chain explorer, signed broker statement) |
+| `backfill_local`    | Reconstructed from operator's local DB / logs |
+| `manual`            | Operator-attested, no programmatic source |
+
+No default value. Implementations MUST set it explicitly.
+
+## 9. `reconciliation` event
 
 ```json
 {
   "kind": "reconciliation",
   "data": {
-    "window": "since_last",
-    "local": {"balance_usd": 974.21, "positions": [...]},
-    "external": {"balance_usd": 974.21, "positions": [...]},
-    "match": true,
-    "drift": {"balance_usd": 0.00}
+    "period": "2026-05-01T00:00Z/2026-05-01T06:00Z",
+    "trust_tier": "exchange_realtime",
+    "matched": 24,
+    "unmatched": 1,
+    "errors": 2
   }
 }
 ```
 
-Compliant agents MUST emit at least one `reconciliation` per 24h. Gap longer
-than 24h = chain considered un-reconciled until next event.
+**Cadence**:
+- Minimum: 1 per 6 hours
+- Recommended: near-realtime streaming (≤ 5 min after each external_action)
 
-### 2.5 `anchor` — public timestamp anchor
+Gap > 6h between reconciliation events → chain status `STALE_RECONCILIATION`
+until the next reconciliation event.
+
+## 10. `anchor` event
 
 ```json
 {
   "kind": "anchor",
   "data": {
     "merkle_root": "sha256:...",
-    "covers_seq_range": [0, 4231],
-    "anchor_uri": "https://twitter.com/bonnybb/status/1234567890",
-    "anchor_kind": "twitter | moltbook | github_commit | btc_op_return"
+    "covers_seq_range": [0, 1024],
+    "anchor_uri": "ipfs://Qm.../receipt_2026-05-05.jsonl",
+    "anchor_kind": "ipfs"
   }
 }
 ```
 
-Daily anchor is the keystone of public verifiability — proves the chain at
-seq 4231 existed at this timestamp, no retroactive editing possible.
+`anchor_kind` ∈ `{twitter, moltbook, github_commit, ipfs, arweave,
+ethereum, btc_op_return}`. Permanent layers (`ipfs`, `arweave`, `ethereum`,
+`btc_op_return`) are protocol-grade evidence. Social anchors are
+informational.
 
-## 3. Reconciliation adapters (per venue)
+**Rules**:
+- anchor MUST reference the hash / merkle_root
+- anchor cannot rewrite history — it only proves "this state existed at
+  this time"
+- compliant agents SHOULD anchor to at least one permanent layer per 24h
 
-Each venue gets a small Python module conforming to:
+## 11. `error` event
 
-```python
-class ReconciliationAdapter:
-    def fetch_order(self, order_id: str) -> dict: ...
-    def fetch_position(self, symbol: str) -> dict: ...
-    def fetch_balance(self) -> dict: ...
-    def normalize(self, raw: dict) -> dict: ...
+```json
+{
+  "kind": "error",
+  "data": {
+    "claim_seq": 1024,
+    "phase": "external_action",
+    "error_type": "exchange_api_failure",
+    "message": "order rejected: insufficient margin",
+    "retryable": true,
+    "context": {"endpoint": "/orders", "request_id": "..."}
+  }
+}
 ```
 
-Reference adapters in v0.1:
+Without this, silent failure becomes indistinguishable from intentional
+omission. Required when an attempted action does not complete.
 
-- `receipt.adapters.coinbase_intx` (Coinbase Advanced Trade with Ed25519 / JWT auth)
-- `receipt.adapters.binance_futures`
-- `receipt.adapters.hyperliquid`
+`phase` ∈ `{external_action, verified, reconciliation, other}`.
 
-Future: `receipt.adapters.github` (for code agents), `receipt.adapters.x` (for content agents).
+## 12. `heartbeat` event
 
-## 4. Verifier algorithm
-
-```
-verify(jsonl_path, adapters) →
-
-1. Walk events in order. Recompute each hash. Compare to stored hash.
-   Any mismatch → INVALID_CHAIN.
-2. For each claim event:
-   - Find matching external_action by claim_seq. Missing → UNVERIFIED_CLAIM.
-   - Find matching verified by claim_seq. Missing → UNVERIFIED_CLAIM.
-   - For each verified event: re-fetch from adapter, compare against stored
-     `data`. Mismatch → STALE_RECONCILIATION.
-3. For each anchor event: confirm anchor_uri actually exists publicly and
-   contains the merkle_root. Missing/altered → BROKEN_ANCHOR.
-4. Confirm at least one reconciliation per 24h since the first event.
-   Gap > 24h → STALE_RECONCILIATION.
-
-Return: chain_status ∈ {VERIFIED, INVALID_CHAIN, UNVERIFIED_CLAIM,
-                       STALE_RECONCILIATION, BROKEN_ANCHOR}
+```json
+{
+  "kind": "heartbeat",
+  "data": {
+    "status": "alive",
+    "latency_ms": 120
+  }
+}
 ```
 
-Only `VERIFIED` chains earn the public badge.
+Compliant agents SHOULD emit a heartbeat at least every 5 minutes when no
+other event is being written. Heartbeats prove the system was alive and
+chose to take no action — distinguishing presence-with-restraint from
+selective silence.
 
-## 5. Public viewer contract
+## 13. `signal_rejected` event (optional)
 
-A compliant viewer (the iBitLabs reference viewer at `receipt.ibitlabs.com/<handle>`)
-SHOULD render:
+```json
+{
+  "kind": "signal_rejected",
+  "data": {
+    "would_be_action": "open_long",
+    "rejected_by": "regime_gate",
+    "reason": "30d regime is up, long signal counter-trend",
+    "ai": { ... §6 shape ... }
+  }
+}
+```
 
-- Chain status (VERIFIED / one of the failure modes)
-- Last anchor timestamp + link
-- Per-claim cards: claim → action → verified, with reconciliation status
-- Aggregate stats: claim count, verified rate, win rate (if PnL present)
-- Raw JSONL download
+Critical for AI accountability: if a model proposed an action and a guard
+killed it, both are recorded. Without this, "the AI never made bad calls"
+becomes unfalsifiable.
 
-## 6. Versioning
+## 14. Hash chain — canonicalization
 
-`v` field on every event. v0.1 → v1.0 may add new `kind` values. Removal or
-breaking field changes require new major version. Verifiers should accept
-unknown `kind` values in v0.x as informational (do not fail).
+Canonical key order (top-level, used for hashing):
 
-## 7. What this spec is NOT
+```
+(v, schema_version, ts, seq, agent, kind, data, prev_hash)
+```
 
-- NOT a real-time trading API (read-only)
-- NOT a trust system for the agent itself — Receipt makes claims **externally
-  verifiable**, but a "verified" receipt for a losing strategy is still a
-  losing strategy
-- NOT a replacement for exchange-side audit logs (it complements them)
-- NOT cryptocurrency / a token. The hash chain is for tamper detection only.
+`hash = "sha256:" + hex(SHA-256(canonical_bytes))`
 
-## Appendix A: Reference implementation
+**Canonical JSON rules** (RFC 8785 / JCS subset for v0.1):
 
-`pip install receipt-trade` — minimal Python lib + CLI verifier.
-Source: `github.com/AgentBonnybb/receipt`.
+1. All keys (top-level and recursively in `data`) sorted lexicographically
+   by Unicode code point
+2. No whitespace between tokens — separators `(",", ":")`
+3. UTF-8 encoding, non-ASCII NOT escaped (`ensure_ascii=False`)
+4. Numbers as JSON spec literals — no leading `+`, no trailing zeros in
+   fractional parts unless mandated
+5. Strings: standard JSON escaping; senders SHOULD send NFC-normalized
+   strings
+6. Booleans `true`/`false`; absent fields are `null` (NOT omitted)
 
-## Appendix B: First reference adopter
+Implementations in different languages MUST produce byte-identical
+`canonical_bytes` for the same logical event, or chains break across
+implementations. v1.0 will adopt full RFC 8785.
 
-iBitLabs's `$1k → $10k` SOL perpetuals experiment publishes Receipt-compliant
-data at `receipt.ibitlabs.com/sniper-v5.1`, anchored daily to GitHub +
-Moltbook. Live since 2026-MM-DD.
+## 15. Verifier algorithm (summary)
+
+```
+verify(jsonl, adapters) →
+
+1. Walk events. Recompute each hash. Mismatch → INVALID_CHAIN.
+2. Check seq monotonic and prev_hash linkage.
+3. For each claim:
+   - Find matching external_action (by claim_seq) OR error OR signal_rejected.
+     Missing all three → UNVERIFIED_CLAIM.
+   - If external_action present: find matching verified.
+     Missing → UNVERIFIED_CLAIM.
+   - Verified must have id_match: true → else SUSPECT_VERIFICATION.
+4. For each anchor: confirm anchor_uri dereferenceable + merkle_root matches.
+   Failure → BROKEN_ANCHOR.
+5. Confirm hard reconciliation gap ≤ 6h.
+   Larger → STALE_RECONCILIATION.
+
+Return: VERIFIED | INVALID_CHAIN | UNVERIFIED_CLAIM | SUSPECT_VERIFICATION
+      | STALE_RECONCILIATION | BROKEN_ANCHOR | EMPTY
+```
+
+## 16. Example flow
+
+### Claim
+
+```json
+{
+  "v": "0.1", "schema_version": "1",
+  "ts": 1710000000000, "seq": 1024,
+  "agent": "ibitlabs_agent_v3",
+  "kind": "claim",
+  "data": {
+    "action": "open_long", "symbol": "BTC-USD",
+    "side": "buy", "size": 0.1
+  },
+  "prev_hash": "sha256:...", "hash": "sha256:..."
+}
+```
+
+### External action
+
+```json
+{
+  "kind": "external_action",
+  "data": {
+    "claim_seq": 1024,
+    "venue": "coinbase",
+    "response": {"order_id": "abc123"}
+  }
+}
+```
+
+### Verified
+
+```json
+{
+  "kind": "verified",
+  "data": {
+    "claim_seq": 1024,
+    "trust_tier": "exchange_realtime",
+    "match": {
+      "symbol": "BTC-USD", "side": "buy", "size": 0.1,
+      "price_match": true, "time_match": true, "id_match": true,
+      "tolerance_used": {"price": 0.002, "time_ms": 5000}
+    }
+  }
+}
+```
+
+## 17. Attack model
+
+Receipt v0.1 is designed to make these attacks **detectable** by any third
+party with a copy of the chain and access to the venue's public API:
+
+### 17.1 Selective logging attack
+*Operator records only successful trades.*
+**Mitigation**: heartbeat REQUIRED + reconciliation MANDATORY → gaps in
+trades-vs-balance reconciliation surface omitted events.
+
+### 17.2 Price-matching manipulation
+*Operator widens price tolerance retroactively to mask mismatches.*
+**Mitigation**: `tolerance_used` MUST be recorded per event +
+`id_match` priority over price → tolerance widening visible in chain;
+identity (order_id) cannot be retroactively widened.
+
+### 17.3 Backfill forgery
+*Operator fabricates historical chain after the fact.*
+**Mitigation**: anchors on permanent layers (IPFS / Arweave / Ethereum /
+btc_op_return) + `trust_tier` flagging makes backfill-only chains visibly
+weaker than realtime chains.
+
+### 17.4 AI decision drift
+*Model behavior changes silently between checkpoints.*
+**Mitigation**: `prompt_hash` + `agent_version` REQUIRED →
+verifiers can detect undocumented agent changes.
+
+### 17.5 Out-of-scope (NOT defended in v0.1)
+
+- Initial strategy parameters at genesis claim are operator-attested
+- Compromised venue API as ground truth
+- Multi-account shell games (operator runs N bots, publishes only the
+  winner's chain)
+
+Receipt does not eliminate fraud. It raises the cost of fraud from zero
+(post screenshots) to non-zero (must publish a chain that re-derives
+correctly from venue API and survives daily anchoring).
+
+## 18. Naming, license, packaging
+
+- Project: **Receipt**
+- Spec: **Receipt Spec v0.1**
+- Code license: **MIT**
+- Spec license: **CC-BY-4.0**
+- Reference impl: `pip install receipt-protocol`
+- Source: `github.com/AgentBonnybb/receipt`
+
+## 19. Versioning
+
+`v` and `schema_version` on every event. v0.1 → v1.0 may add new `kind`
+values and optional fields. Verifiers MUST accept unknown `kind` values
+in v0.x as informational (forward-compat) — do not fail. Breaking
+changes require a major version bump.

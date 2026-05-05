@@ -1,7 +1,7 @@
-"""receipt CLI — verify and inspect receipt JSONL files.
+"""receipt CLI — verify and inspect Receipt JSONL files.
 
 Usage:
-    receipt verify <path.jsonl>      # static chain integrity check
+    receipt verify <path.jsonl>      # static chain integrity check (SPEC §15)
     receipt show <path.jsonl>        # human-readable summary
     receipt --version
 """
@@ -29,7 +29,7 @@ def cmd_verify(path: str) -> int:
             try:
                 events.append(json.loads(line))
             except json.JSONDecodeError as e:
-                print(f"error: line {i} not valid JSON: {e}", file=sys.stderr)
+                print(f"error: line {i} invalid JSON: {e}", file=sys.stderr)
                 return 2
 
     report = verify_chain(events)
@@ -39,6 +39,8 @@ def cmd_verify(path: str) -> int:
     print(f"  events:    {report.n_events}")
     print(f"  claims:    {report.n_claims}")
     print(f"  verified:  {report.n_verified}")
+    print(f"  errors:    {report.n_errors}")
+    print(f"  rejected:  {report.n_rejected}")
     if report.issues:
         print("  issues:")
         for issue in report.issues:
@@ -53,6 +55,7 @@ def cmd_show(path: str) -> int:
         return 2
     counts: dict[str, int] = {}
     agents: set[str] = set()
+    trust_tiers: dict[str, int] = {}
     first_ts = last_ts = None
     with p.open() as f:
         for line in f:
@@ -64,12 +67,26 @@ def cmd_show(path: str) -> int:
             agents.add(ev["agent"])
             first_ts = first_ts or ev["ts"]
             last_ts = ev["ts"]
+            tt = (ev.get("data") or {}).get("trust_tier")
+            if tt:
+                trust_tiers[tt] = trust_tiers.get(tt, 0) + 1
+
+    def _fmt_ts(ms: int | None) -> str:
+        if ms is None:
+            return "-"
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
     print(f"path:    {p}")
     print(f"agents:  {sorted(agents)}")
-    print(f"window:  {first_ts}  →  {last_ts}")
+    print(f"window:  {_fmt_ts(first_ts)}  →  {_fmt_ts(last_ts)}")
     print(f"events by kind:")
     for k in sorted(counts):
         print(f"  {k:<20} {counts[k]}")
+    if trust_tiers:
+        print(f"trust tiers:")
+        for tier, n in sorted(trust_tiers.items(), key=lambda x: -x[1]):
+            print(f"  {tier:<20} {n}")
     return 0
 
 

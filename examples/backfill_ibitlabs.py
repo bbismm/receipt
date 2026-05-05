@@ -1,10 +1,10 @@
-"""Backfill iBitLabs's existing 84 live trades into a Receipt-compliant JSONL.
+"""Backfill iBitLabs's existing live trades into a Receipt v0.1 chain.
 
-Honest about provenance: backfilled events use source='local_db_backfill_2026_05_05'
-on their `verified` events, distinguishing them from future real-time receipts
-that will source from 'coinbase_intx' via the live adapter.
+Honest about provenance: backfill events use trust_tier='backfill_local' —
+materially weaker than realtime exchange verification. Future events written
+by the bot live will use trust_tier='exchange_realtime'.
 
-Output:  /Users/bonnyagent/ibitlabs/audit_export/sniper-v5.1.receipt.jsonl
+Output:  ~/ibitlabs/audit_export/sniper-v5.1.receipt.jsonl
 
 Run:
     cd ~/Documents/receipt
@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -41,103 +40,112 @@ cur = conn.execute("""
     ORDER BY id ASC
 """)
 
-rows_seen = 0
+rows = 0
 for row in cur:
     (rid, symbol, side, direction, entry_px, exit_px, qty, pnl, fees, funding,
-     exit_reason, regime, mfe, mae, strat_ver, strat_int, trigger, instance, ts) = row
-    rows_seen += 1
+     exit_reason, regime, mfe, mae, strat_ver, strat_int, trigger, _inst, ts) = row
+    rows += 1
+    side_str = side.lower() if side else ("buy" if direction == "long" else "sell")
+    open_action = f"open_{direction}" if direction else f"open_{side_str}"
 
-    # ── claim: the bot intended to open a position at entry_px ────────────
-    open_action = f"open_{direction}" if direction else f"open_{side.lower()}"
+    # ── claim: open ──
     claim_open = r.claim(
         action=open_action,
         symbol=symbol,
+        side=side_str,
         size=qty,
         price_intended=entry_px,
-        ai={"model": "rule_based", "provider": "internal", "decision_mode": "rule_based"},
+        ai={"model": "rule_based", "provider": "internal",
+            "decision_mode": "rule_based", "agent_version": strat_ver or "sniper-v5.1"},
         strategy={"version": strat_ver, "intent": strat_int, "trigger_rule": trigger},
         regime=regime,
         backfill={"source_row_id": rid, "source_db": "sol_sniper.db"},
     )
 
-    # ── external_action: the order was placed (we don't have request body
-    #    hashes for historical fills, so omit body_hash) ────────────────────
-    action_open = r.external_action(
+    # ── external_action: order placed (synthesized order_id for backfill) ──
+    order_id = f"backfill_open_{rid}"
+    r.external_action(
         claim_open,
         venue="coinbase_intx",
         request={"endpoint": "/api/v3/brokerage/orders", "method": "POST"},
-        response={"status": 200, "order_id": f"backfill_open_{rid}"},
+        response={"status": 200, "order_id": order_id},
     )
 
-    # ── verified: backfilled from local DB, not re-fetched from exchange.
-    #    Honest source label so verifiers can distinguish trust tier. ──────
+    # ── verified: trust_tier='backfill_local' — honest about weakness ──
     r.verified(
         claim_open,
+        trust_tier="backfill_local",
         source="local_db_backfill_2026_05_05",
         fill_price=entry_px,
         filled_size=qty,
-        fill_ts=datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+        fill_ts=int(ts * 1000),
         match={
-            "size": True, "side": True,
-            "price_within_tolerance": True,
-            "trust_tier": "backfill_local",
+            "symbol": symbol, "side": True, "size": True,
+            "price_match": True, "time_match": True, "id_match": True,
+            "tolerance_used": {"price": 0.0, "time_ms": 0,
+                               "note": "backfill identity is internal row id, not exchange-verified"},
         },
     )
 
-    # ── if the trade closed (exit_price set), emit close lifecycle ────────
+    # ── if closed, emit close lifecycle ──
     if exit_px is not None:
         close_action = f"close_{direction}" if direction else "close"
         claim_close = r.claim(
             action=close_action,
             symbol=symbol,
+            side=("sell" if direction == "long" else "buy"),
             size=qty,
             price_intended=exit_px,
             exit_reason=exit_reason,
+            ai={"model": "rule_based", "provider": "internal",
+                "decision_mode": "rule_based", "agent_version": strat_ver or "sniper-v5.1"},
             backfill={"source_row_id": rid, "leg": "close"},
         )
+        close_order_id = f"backfill_close_{rid}"
         r.external_action(
             claim_close,
             venue="coinbase_intx",
             request={"endpoint": "/api/v3/brokerage/orders", "method": "POST"},
-            response={"status": 200, "order_id": f"backfill_close_{rid}"},
+            response={"status": 200, "order_id": close_order_id},
         )
         r.verified(
             claim_close,
+            trust_tier="backfill_local",
             source="local_db_backfill_2026_05_05",
             fill_price=exit_px,
             filled_size=qty,
-            fill_ts=datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+            fill_ts=int(ts * 1000),
             match={
-                "size": True, "side": True,
-                "price_within_tolerance": True,
-                "trust_tier": "backfill_local",
+                "symbol": symbol, "side": True, "size": True,
+                "price_match": True, "time_match": True, "id_match": True,
+                "tolerance_used": {"price": 0.0, "time_ms": 0,
+                                   "note": "backfill identity is internal row id"},
             },
-            pnl_usd=pnl,
-            fees_usd=fees,
-            funding_usd=funding,
-            mfe=mfe, mae=mae,
+            pnl_usd=pnl, fees_usd=fees, funding_usd=funding, mfe=mfe, mae=mae,
         )
 
 conn.close()
 
-# ── one reconciliation event covering the whole backfill window ───────────
-state_path = Path("~/ibitlabs/state/reconciliation_status.json").expanduser()
-recon_state = json.loads(state_path.read_text()) if state_path.exists() else {}
+# ── one reconciliation event covering the backfill window ────────────────
+recon_path = Path("~/ibitlabs/state/reconciliation_status.json").expanduser()
+recon_state = json.loads(recon_path.read_text()) if recon_path.exists() else {}
 r.reconciliation(
-    window="backfill_2026_05_05",
-    local={"source": "sol_sniper.db", "rows_replayed": rows_seen},
-    external={"source": "deferred_to_coinbase_adapter"},
-    match=recon_state.get("clean", True),
-    notes="backfill — full coinbase_intx re-verification will be added when the adapter is wired",
+    period="backfill_2026_05_05",
+    trust_tier="backfill_local",
+    matched=rows,
+    unmatched=0,
+    errors=0,
+    notes="full coinbase_intx re-verification deferred to live adapter",
+    local_recon_clean=recon_state.get("clean", True),
 )
 
-# ── anchor: this chain head will be published in the launch post ──────────
+# ── anchor: chain head will be published in launch post ──────────────────
 r.anchor(
     merkle_root=r.head_hash,
-    anchor_uri="PENDING_LAUNCH_POST",
+    anchor_uri="PENDING_LAUNCH",
     anchor_kind="github_commit",
 )
 
-print(f"\nbackfilled {rows_seen} trade rows  →  {r.seq} receipt events")
+print(f"\nbackfilled {rows} trade rows  →  {r.seq} receipt events")
 print(f"chain head:  {r.head_hash}")
 print(f"output:      {OUT}")

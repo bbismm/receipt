@@ -106,16 +106,23 @@ class CoinbaseAdapter:
         self,
         claim_data: dict,
         external_action_data: dict,
-        price_tolerance_pct: float = 0.5,
-        timing_tolerance_sec: int = 60,
+        *,
+        price_tolerance: float = 0.002,
+        time_tolerance_ms: int = 5000,
     ) -> MatchResult:
-        order_id = (external_action_data.get("response") or {}).get("order_id")
+        """Returns SPEC §7 match. id_match priority over price (SPEC §17.2)."""
+        symbol = claim_data.get("symbol", "")
+        response = external_action_data.get("response") or {}
+        order_id = response.get("order_id") or response.get("execution_id")
         if not order_id:
-            return MatchResult(notes=["no order_id in external_action.response"])
+            return MatchResult(symbol=symbol, notes=["no order_id/execution_id in external_action"])
         try:
             truth = self.fetch_order(order_id)
         except Exception as e:
-            return MatchResult(notes=[f"fetch_order failed: {e}"])
+            return MatchResult(symbol=symbol, notes=[f"fetch_order failed: {e}"])
+
+        # IDENTITY BINDING — most important per SPEC §17.2
+        id_match = bool(truth.get("order_id")) and truth["order_id"] == order_id
 
         claim_size = float(claim_data.get("size") or 0)
         claim_action = (claim_data.get("action") or "").lower()
@@ -127,27 +134,33 @@ class CoinbaseAdapter:
 
         price_match = False
         if claim_price > 0 and truth.get("average_fill_price"):
-            slippage_pct = abs(truth["average_fill_price"] - claim_price) / claim_price * 100
-            price_match = slippage_pct <= price_tolerance_pct
+            drift = abs(truth["average_fill_price"] - claim_price) / claim_price
+            price_match = drift <= price_tolerance
 
-        # timing: not currently in claim envelope; placeholder
-        timing_match = True
+        # timing — fill_at vs claim ts; populate when claim carries an embedded ts
+        time_match = True
+
         notes: list[str] = []
+        if not id_match:
+            notes.append(f"id_match=false: claim_action={claim_action}, truth_id={truth.get('order_id')}")
         if not size_match:
-            notes.append(f"size: claim={claim_size}, truth={truth['filled_size']}")
+            notes.append(f"size: claim={claim_size}, truth={truth.get('filled_size')}")
         if not side_match:
-            notes.append(f"side: claim_action={claim_action}, truth_side={truth['side']}")
+            notes.append(f"side: claim_action={claim_action}, truth_side={truth.get('side')}")
         if not price_match and claim_price > 0:
             notes.append(
                 f"price: claim={claim_price}, truth={truth.get('average_fill_price')}, "
-                f"tolerance={price_tolerance_pct}%"
+                f"tolerance={price_tolerance}"
             )
 
         return MatchResult(
-            size=size_match,
+            symbol=symbol,
             side=side_match,
-            price_within_tolerance=price_match,
-            timing_within_tolerance=timing_match,
+            size=size_match,
+            price_match=price_match,
+            time_match=time_match,
+            id_match=id_match,
+            tolerance_used={"price": price_tolerance, "time_ms": time_tolerance_ms},
             notes=notes,
         )
 
