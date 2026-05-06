@@ -326,7 +326,12 @@ Canonical key order (top-level, used for hashing):
 2. No whitespace between tokens — separators `(",", ":")`
 3. UTF-8 encoding, non-ASCII NOT escaped (`ensure_ascii=False`)
 4. Numbers as JSON spec literals — no leading `+`, no trailing zeros in
-   fractional parts unless mandated
+   fractional parts unless mandated. **Critical**: integer-valued floats
+   MUST serialize as ints — `1.0` → `"1"`, never `"1.0"`. JavaScript's
+   `JSON.stringify` does this by default; Python implementations MUST
+   pre-normalize. (Caught in v0.1.1 cross-impl tests 2026-05-06: any float
+   round-tripped through JSON.parse in JS becomes Number — the only stable
+   canonical form is the int-where-possible representation.)
 5. Strings: standard JSON escaping; senders SHOULD send NFC-normalized
    strings
 6. Booleans `true`/`false`; absent fields are `null` (NOT omitted)

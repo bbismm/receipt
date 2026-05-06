@@ -21,9 +21,30 @@ HASH_PREFIX = "sha256:"
 CANONICAL_KEYS = ("v", "schema_version", "ts", "seq", "agent", "kind", "data", "prev_hash")
 
 
+def _normalize_numbers(v):
+    """Per SPEC §14 rule 4: 'no trailing zeros in fractional parts unless mandated'.
+
+    Python's default JSON serializer outputs `1.0` as "1.0" and `1e10` as
+    "10000000000.0" — but JS's JSON.stringify outputs "1" and "10000000000"
+    respectively. Without this normalization, Python and JS produce different
+    canonical bytes for the same logical event, breaking the chain hash.
+
+    Fix: recursively convert integer-valued floats to ints before serialization.
+    """
+    if isinstance(v, bool):
+        return v  # bool is subclass of int; preserve before int branch
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    if isinstance(v, dict):
+        return {k: _normalize_numbers(val) for k, val in v.items()}
+    if isinstance(v, list):
+        return [_normalize_numbers(x) for x in v]
+    return v
+
+
 def _canonical(event: dict) -> str:
     """Serialize the hashable subset of an event in canonical form per SPEC §14."""
-    body = {k: event[k] for k in CANONICAL_KEYS if k in event}
+    body = {k: _normalize_numbers(event[k]) for k in CANONICAL_KEYS if k in event}
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 

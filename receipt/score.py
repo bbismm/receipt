@@ -315,11 +315,29 @@ def compute_score(events: Iterable[dict], report: VerifyReport | None = None,
     if not events:
         return {
             "agent": None, "verdict": "Unverified", "verdict_color": "red",
-            "score": 0, "dimensions": {}, "summary": {}, "flags": ["empty_chain"],
+            "score": 0, "dimensions": {}, "summary": {},
+            "rule_breaks": ["empty"], "suspicion_flags": [],
+            "examples": {"mismatch": [], "missing_receipts": []},
+            "schema_version": SCHEMA_VERSION,
+            "chain_status": report.status.value,
+            "computed_at_ms": int(time.time() * 1000),
+        }
+    # SPEC §1: INVALID_CHAIN is fatal — score=0, verdict=Unverified, no
+    # further dimensional computation. Mirrors viewer/score.js short-circuit.
+    if report.status == ChainStatus.INVALID_CHAIN:
+        # Match viewer/score.js INVALID_CHAIN shape exactly: no raw_score,
+        # no trust_tier_majority, no window — INVALID is terminal.
+        return {
+            "agent": events[0].get("agent"),
+            "schema_version": SCHEMA_VERSION,
+            "verdict": "Unverified", "verdict_color": "red",
+            "score": 0,
+            "dimensions": {"Integrity": {"score": 0, "detail": "hash chain broken"}},
+            "summary": {}, "rule_breaks": ["invalid_chain"],
             "suspicion_flags": [],
             "examples": {"mismatch": [], "missing_receipts": []},
-            "rule_breaks": ["chain is empty"],
-            "schema_version": SCHEMA_VERSION,
+            "chain_status": report.status.value,
+            "computed_at_ms": int(time.time() * 1000),
         }
 
     # Resolve window — caller-supplied OR last 7d from chain head.
