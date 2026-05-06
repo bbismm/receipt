@@ -7,6 +7,7 @@
 
 > **Receipt is a minimal standard for verifiable actions.**
 > **If an agent claims it acted, it should produce a receipt.**
+> **If the system forgets, it shows up as a broken chain.**
 
 ## 0. Design goals
 
