@@ -146,11 +146,11 @@ fills gaps the score cannot. The verifier MUST emit these as an array:
 
 | Flag | Trigger |
 |---|---|
-| `too_perfect_no_errors` | ≥20 claims with zero `error` events ever (real systems fail; perfect logs are suspicious) |
+| `no_error_events` | ≥20 claims with zero `error` events ever (real systems fail; perfect logs are suspicious) |
 | `sudden_activity_gap` | Any pair of consecutive events with > 24h gap, while window covers > 24h |
-| `high_mismatch_cluster` | ≥3 verified events with `id_match=false` within any rolling 10-event window |
+| `mismatch_cluster` | ≥3 verified events with `id_match=false` within any rolling 10-event window |
 | `backfill_dominant_pretending_realtime` | `trust_tier=backfill_local` events outnumber `exchange_realtime` events 5:1 or more, despite chain claiming an exchange venue |
-| `anchor_only_social` | All anchors in window are tier `social` |
+| `only_social_anchor` | All anchors in window are tier `social` |
 | `heartbeat_silence` | Window covers > 24h but contains zero `heartbeat` events |
 
 These don't change the score, but every viewer MUST display them

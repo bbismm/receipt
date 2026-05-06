@@ -1,13 +1,15 @@
-"""Verifier v0.1 — verdict + trust score.
+"""Verifier v0.1.1 — verdict + trust score (FROZEN).
 
-Implements docs/trust_score.md v0.1 EXACTLY. Server-side and client-side
+Implements docs/trust_score.md v0.1.1 EXACTLY. Server-side and client-side
 (viewer/index.html) MUST produce identical numbers from the same input.
 
 Public API:
-    compute_score(events, report) -> dict matching docs/trust_score.md §3
+    compute_score(events, report, window_start_ms=None, window_end_ms=None)
+        -> dict matching docs/trust_score.md §3 output shape
 """
 from __future__ import annotations
 
+import time
 from typing import Iterable
 
 from receipt.chain import ChainStatus, VerifyReport, verify_chain
@@ -166,9 +168,9 @@ def _suspicion_flags(events: list[dict], summary: dict, window_ms: int) -> list[
     patterns the score can miss."""
     flags: list[str] = []
 
-    # too_perfect_no_errors
+    # no_error_events — real systems fail; perfect logs are suspicious
     if summary.get("total_claims", 0) >= 20 and summary.get("errors", 0) == 0:
-        flags.append("too_perfect_no_errors")
+        flags.append("no_error_events")
 
     # sudden_activity_gap — any pair of consecutive events with >24h gap
     # (only relevant if window itself spans >24h)
@@ -187,7 +189,7 @@ def _suspicion_flags(events: list[dict], summary: dict, window_ms: int) -> list[
             window = verifs[i:i + 10]
             mismatch = sum(1 for e in window if not (e["data"].get("match") or {}).get("id_match"))
             if mismatch >= 3:
-                flags.append("high_mismatch_cluster")
+                flags.append("mismatch_cluster")
                 break
 
     # backfill_dominant_pretending_realtime — backfill > 5× realtime
@@ -206,7 +208,7 @@ def _suspicion_flags(events: list[dict], summary: dict, window_ms: int) -> list[
     anchors_in_window = [e for e in events if e["kind"] == "anchor"]
     if anchors_in_window and all(_anchor_tier(a["data"].get("anchor_kind", "")) == "social"
                                   for a in anchors_in_window):
-        flags.append("anchor_only_social")
+        flags.append("only_social_anchor")
 
     # heartbeat_silence — window > 24h but no heartbeat
     if window_ms > 24 * 3_600_000 and not any(e["kind"] == "heartbeat" for e in events):
@@ -379,8 +381,9 @@ def compute_score(events: Iterable[dict], report: VerifyReport | None = None,
         "trust_tier_majority": tier_majority,
         "dimensions": dims,
         "summary": summary,
-        "flags": _flags(events, dims, acc_meta),
+        "rule_breaks": _flags(events, dims, acc_meta),
         "suspicion_flags": _suspicion_flags(events, summary, window_ms),
         "examples": _examples(events),
         "chain_status": report.status.value,
+        "computed_at_ms": int(time.time() * 1000),
     }

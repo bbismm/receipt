@@ -317,7 +317,7 @@ function computeScore(events, report) {
 
   // Suspicion flags (SPEC §2.6) — additive, do NOT affect score
   const suspicion = [];
-  if (claims.size >= 20 && errCount === 0) suspicion.push("too_perfect_no_errors");
+  if (claims.size >= 20 && errCount === 0) suspicion.push("no_error_events");
   if (DEFAULT_WINDOW_MS > 24*3600000) {
     let maxGap = 0;
     for (let i=1; i<events.length; i++) maxGap = Math.max(maxGap, (events[i].ts - events[i-1].ts)/3600000);
@@ -327,7 +327,7 @@ function computeScore(events, report) {
     for (let i=0; i<=verifs.length-10; i++) {
       const win = verifs.slice(i, i+10);
       const mm = win.filter(e => !((e.data.match||{}).id_match)).length;
-      if (mm >= 3) { suspicion.push("high_mismatch_cluster"); break; }
+      if (mm >= 3) { suspicion.push("mismatch_cluster"); break; }
     }
   }
   const tierCounts = {};
@@ -337,7 +337,7 @@ function computeScore(events, report) {
   }
   const bf = tierCounts.backfill_local||0, rt = tierCounts.exchange_realtime||0;
   if (bf > 0 && rt > 0 && bf > rt*5) suspicion.push("backfill_dominant_pretending_realtime");
-  if (anchors.length > 0 && anchors.every(a => anchorTier(a.data.anchor_kind||"") === "social")) suspicion.push("anchor_only_social");
+  if (anchors.length > 0 && anchors.every(a => anchorTier(a.data.anchor_kind||"") === "social")) suspicion.push("only_social_anchor");
   if (DEFAULT_WINDOW_MS > 24*3600000 && !events.some(e=>e.kind==="heartbeat")) suspicion.push("heartbeat_silence");
 
   return {
@@ -347,9 +347,10 @@ function computeScore(events, report) {
     trust_tier_majority: tierMaj,
     dimensions: dims,
     summary: {total_claims: claims.size, receipts, verified: verified_ok, mismatch: mismatches, errors: errCount},
-    flags,
+    rule_breaks: flags,
     suspicion_flags: suspicion,
     examples: {mismatch: exMismatch.slice(0,5), missing_receipts: exMissing},
+    computed_at_ms: Date.now(),
   };
 }
 
@@ -412,10 +413,10 @@ function render(events, report, score, elapsedMs) {
   }
   html += `</div></div>`;
 
-  // Flags
-  if (score.flags && score.flags.length) {
-    html += `<div class="section"><h3>Flags</h3><div class="flags">`;
-    for (const f of score.flags) html += `<span class="flag">${f}</span>`;
+  // Rule breaks (things that contributed to score deductions)
+  if (score.rule_breaks && score.rule_breaks.length) {
+    html += `<div class="section"><h3>Rule breaks</h3><div class="flags">`;
+    for (const f of score.rule_breaks) html += `<span class="flag">${f}</span>`;
     html += `</div></div>`;
   }
 
