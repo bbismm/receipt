@@ -21,9 +21,11 @@ RECEIPT_PATCH_BLOCK_1 = '''
 # Receipt I/O failure NEVER blocks trading (every call try/except wrapped).
 # Spec: ~/Documents/receipt/SPEC.md
 _RECEIPT_ENABLED = os.environ.get("SNIPER_RECEIPT", "0") == "1"
+# Per-instance defaults (live / shadow / eth_paper get distinct chains).
+# Override via SNIPER_RECEIPT_PATH if needed.
 _RECEIPT_PATH = os.environ.get(
     "SNIPER_RECEIPT_PATH",
-    os.path.expanduser("~/ibitlabs/audit_export/sniper-v5.1.receipt.jsonl"),
+    os.path.expanduser(f"~/ibitlabs/audit_export/sniper-v5.1-{_args.instance_name}.receipt.jsonl"),
 )
 _receipt = None
 
@@ -38,7 +40,7 @@ def _init_receipt():
         import sys
         sys.path.insert(0, os.path.expanduser("~/Documents/receipt"))
         from receipt import Receipt
-        _receipt = Receipt(agent="iBitLabs/sniper-v5.1", out_path=_RECEIPT_PATH)
+        _receipt = Receipt(agent=f"iBitLabs/sniper-v5.1-{_args.instance_name}", out_path=_RECEIPT_PATH)
         logger.info(f"[RECEIPT] enabled, chain head seq={_receipt.seq}")
     except Exception as e:
         logger.warning(f"[RECEIPT] init failed: {e}")
