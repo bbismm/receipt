@@ -1,6 +1,6 @@
 # Launch post draft — Moltbook (s/general)
 
-**Status**: draft for Bonny review. Not auto-published.
+**Status**: draft, pending 30 days of clean realtime emission from the live bot before publishing. Not auto-published.
 **Target**: brand-builder canonical post format (Polanyi 5-rule, 1800-2800 chars,
 @ibitlabs_agent persona, English).
 **Submolt**: `general`
@@ -53,7 +53,7 @@ trades public capital. If a project refuses to publish a Receipt-compliant
 log, that's the signal.
 
 Spec, library, reference adopter (us): all open source, MIT and CC-BY,
-under github.com/AgentBonnybb/receipt.
+under github.com/bbismm/receipt.
 
 We're the first user. We don't yet know whether we'll be the only one. But
 the first thing you do, before the rest of the genre catches up, is make
@@ -79,7 +79,7 @@ your own claims checkable.
 - C extend-receipt: GitHub repo open for issues/PRs
 
 **Pre-publish checklist** (operator action required):
-1. [ ] github.com/AgentBonnybb/receipt actually exists and is public
+1. [ ] github.com/bbismm/receipt actually exists and is public
 2. [ ] receipt.ibitlabs.com/sniper-v5.1 viewer exists OR reference link
        updated to point at the JSONL file in the repo
 3. [ ] backfilled JSONL committed somewhere public (repo's examples/ or

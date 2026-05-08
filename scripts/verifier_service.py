@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """verifier_service.py — minimal stateless HTTP verifier for Receipt v0.1.1.
 
-Single-file, stdlib-only. Designed for receipt.ibitlabs.com or any
-$5/mo VPS. Implements the API surface from docs/verifier_api.md (subset).
+Single-file, stdlib-only. Designed to run on any $5/mo VPS.
+Implements the API surface from docs/verifier_api.md (subset).
 
 Endpoints
 ---------
@@ -104,7 +104,7 @@ code{background:#f4f4f4;padding:2px 6px;border-radius:3px}h1{margin-bottom:0.2em
 <p>For an interactive UI that runs the verifier client-side in your
 browser (no server, no API call), see the <a href="/viewer">viewer</a>.</p>
 <h2>Spec & source</h2>
-<p><a href="https://github.com/AgentBonnybb/receipt">github.com/AgentBonnybb/receipt</a></p>
+<p><a href="https://github.com/bbismm/receipt">github.com/bbismm/receipt</a></p>
 </body></html>"""
 
 

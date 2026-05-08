@@ -456,7 +456,7 @@ correctly from venue API and survives daily anchoring).
 - Code license: **MIT**
 - Spec license: **CC-BY-4.0**
 - Reference impl: `pip install receipt-protocol`
-- Source: `github.com/AgentBonnybb/receipt`
+- Source: `github.com/bbismm/receipt`
 
 ## 19. Versioning
 

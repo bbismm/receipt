@@ -49,12 +49,22 @@ that's the signal.
 
 ## Status
 
-- **Spec v0.1**: draft, see [SPEC.md](./SPEC.md)
-- **Reference adopter**: iBitLabs's `$1k → $10k` SOL perpetuals experiment
-  publishes Receipt-compliant data at `receipt.ibitlabs.com/sniper-v5.1`
-  (live since 2026-MM-DD).
-- **Reconciliation adapters**: Coinbase Advanced Trade (in progress),
-  Binance Futures, Hyperliquid (planned)
+- **Spec v0.1.1**: draft — see [SPEC.md](./SPEC.md). Canonicalization rules
+  frozen pre-v1.0; cross-implementation parity tests in [`tests/`](./tests/).
+  Breaking changes possible before v1.0.
+- **Reference adopter (wiring in progress)**: iBitLabs's `$1k → $10k` SOL
+  perpetuals experiment. Backfill receipts for live trade history work today
+  via [`examples/backfill_ibitlabs.py`](./examples/backfill_ibitlabs.py).
+  Realtime emission from the live bot is queued — see
+  [`integration/sniper_main_patch.py`](./integration/sniper_main_patch.py).
+- **Reconciliation adapters**: Coinbase Advanced Trade (in
+  [`receipt/adapters/`](./receipt/adapters/)); Binance Futures + Hyperliquid
+  (planned).
+- **Anchor**: IPFS daily Merkle anchor cron at
+  [`scripts/anchor_daily.py`](./scripts/anchor_daily.py).
+- **Verifier**: HTTP service at
+  [`scripts/verifier_service.py`](./scripts/verifier_service.py); browser
+  viewer at [`viewer/`](./viewer/).
 
 ## Origin
 

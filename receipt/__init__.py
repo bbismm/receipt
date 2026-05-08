@@ -1,6 +1,6 @@
 """Receipt — open standard for publicly-verifiable AI agent activity logs.
 
-Spec: https://github.com/AgentBonnybb/receipt/blob/main/SPEC.md
+Spec: https://github.com/bbismm/receipt/blob/main/SPEC.md
 
 Quick start:
 

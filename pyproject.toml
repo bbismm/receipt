@@ -17,9 +17,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/AgentBonnybb/receipt"
-Spec = "https://github.com/AgentBonnybb/receipt/blob/main/SPEC.md"
-ReferenceAdopter = "https://receipt.ibitlabs.com/sniper-v5.1"
+Homepage = "https://github.com/bbismm/receipt"
+Spec = "https://github.com/bbismm/receipt/blob/main/SPEC.md"
 
 [project.scripts]
 receipt = "receipt.cli:main"

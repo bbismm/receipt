@@ -2,7 +2,8 @@
 
 **Status**: draft. License: CC-BY-4.0.
 **Goal**: a stateless HTTP API anyone can self-host that produces verdicts
-on Receipt chains. Reference deployment at `receipt.ibitlabs.com`.
+on Receipt chains. Reference deployment planned at `receipt.ibitlabs.com`
+(not yet live).
 
 ## Design principles
 
