@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI 行为账本 · iBitLabs</title>
+<title>AI Activity Ledger</title>
 <style>
   :root {
     --bg: #faf7f1;
@@ -32,14 +32,14 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
-         font: 15px/1.65 -apple-system, "PingFang SC", BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
+         font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI",
+              "Helvetica Neue", sans-serif; }
   main { max-width: 760px; margin: 0 auto; padding: 32px 22px 80px; }
   h1 { margin: 0 0 6px 0; font-size: 26px; font-weight: 600; letter-spacing: -0.3px; }
   .sub { color: var(--muted); margin-bottom: 32px; font-size: 14px; }
   .sub a { color: var(--blue); text-decoration: none; }
   .sub a:hover { text-decoration: underline; }
 
-  /* loading + input controls */
   .controls { display: flex; gap: 10px; margin-bottom: 24px; align-items: center; flex-wrap: wrap; }
   .controls input { flex: 1; min-width: 200px; padding: 9px 12px; border-radius: 8px;
                     border: 1px solid var(--border); background: var(--card); color: var(--fg);
@@ -48,7 +48,6 @@
                      background: var(--card); color: var(--fg); cursor: pointer; font: inherit; }
   .controls button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 
-  /* verdict card */
   .verdict { padding: 28px 24px; border-radius: 14px; margin-bottom: 18px;
              border: 1px solid var(--border); background: var(--card); }
   .verdict.green  { background: var(--green-soft);  border-color: var(--green); }
@@ -63,14 +62,12 @@
   .verdict .score { margin-top: 14px; font-size: 13px; color: var(--muted); }
   .verdict .score b { color: var(--fg); font-size: 18px; font-weight: 700; }
 
-  /* agent identity */
   .agent { padding: 16px 20px; border-radius: 10px; margin-bottom: 18px;
            background: var(--card); border: 1px solid var(--border); }
   .agent .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
   .agent .name { font-size: 16px; font-weight: 600; }
   .agent .raw { margin-top: 6px; font: 12px var(--mono); color: var(--muted); }
 
-  /* stat row */
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
            gap: 10px; margin-bottom: 22px; }
   .stat { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
@@ -78,7 +75,6 @@
   .stat .v { font-size: 26px; font-weight: 700; line-height: 1; }
   .stat .k { color: var(--muted); font-size: 12px; margin-top: 6px; }
 
-  /* timeline */
   .section { margin-bottom: 26px; }
   .section h2 { font-size: 13px; color: var(--muted); text-transform: uppercase;
                 letter-spacing: 0.6px; margin: 0 0 10px 0; font-weight: 600; }
@@ -95,11 +91,7 @@
   .event.ok    { background: var(--green-soft); }
   .event.warn  { background: var(--yellow-soft); }
   .event.fail  { background: var(--red-soft); }
-  .event-more { padding: 12px 16px; text-align: center; color: var(--muted); font-size: 12px;
-                background: var(--card); border-top: 1px solid var(--border); cursor: pointer; }
-  .event-more:hover { color: var(--fg); }
 
-  /* dimensions explained */
   .dims { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
           gap: 10px; }
   .dim { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
@@ -112,17 +104,14 @@
   .dim.mid  .dim-score { color: var(--yellow); }
   .dim.low  .dim-score { color: var(--red); }
   .dim .dim-q { color: var(--muted); font-size: 12px; margin: 2px 0 6px 0; }
-  .dim .dim-now { font-size: 13px; line-height: 1.5; }
   .dim .dim-fix { color: var(--muted); font-size: 12px; margin-top: 6px; line-height: 1.5; }
 
-  /* warnings & flags */
   .alerts { padding: 14px 18px; border-radius: 10px; background: var(--yellow-soft);
             border: 1px solid var(--yellow); margin-bottom: 18px; }
   .alerts .a-head { font-weight: 600; color: var(--yellow); font-size: 13px; margin-bottom: 6px; }
   .alerts ul { margin: 0; padding-left: 20px; }
   .alerts li { font-size: 13px; line-height: 1.6; }
 
-  /* advanced details */
   details { margin-top: 14px; }
   details summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; }
   details summary:hover { color: var(--fg); }
@@ -134,7 +123,6 @@
   details .meta-tbl td:first-child { color: var(--muted); }
   details .meta-tbl td:nth-child(2) { font-family: var(--mono); }
 
-  /* footer */
   .foot { color: var(--muted); font-size: 12px; margin-top: 36px; text-align: center;
           line-height: 1.7; }
   .foot a { color: var(--muted); }
@@ -150,67 +138,102 @@
 </head>
 <body>
 <main>
-  <h1>AI 行为账本</h1>
+  <h1>AI Activity Ledger</h1>
   <div class="sub">
-    每一条记录都是 AI agent 自己写下的工作日志,密码学链接起来。
-    任何人都可以独立验证 —— 包括正在看这页的你。
-    <span class="crypto-badge">浏览器内完成验证</span>
+    Every entry is a working log the AI wrote about itself, cryptographically
+    chained together. Anyone — including you, right now — can verify it
+    independently.
+    <span class="crypto-badge">verified in your browser</span>
   </div>
 
   <div class="controls">
-    <input id="path" placeholder="留空 = 加载当前默认链 / 或贴一份 .jsonl 文件的 URL" value="">
+    <input id="path" placeholder="Leave blank to load the default chain — or paste a URL to a .jsonl file" value="">
     <input type="file" id="file" accept=".jsonl,.json" style="flex:0 0 auto;">
-    <button class="primary" onclick="loadAndRender()">读一下</button>
+    <button class="primary" onclick="loadAndRender()">Read it</button>
   </div>
 
-  <div id="out" class="loading">正在加载默认链 (shadow-chain.jsonl)…</div>
+  <div id="out" class="loading">Loading default chain (shadow-chain.jsonl)…</div>
 </main>
 
 <div class="foot">
-  Receipt v0.1 规范 · <a href="https://github.com/bbismm/receipt" target="_blank">github.com/bbismm/receipt</a><br>
-  这是面向操作者的简化面板。审计员 / 开发者请用 <a href="./index.html">完整验证页</a>(显示原始字段、hash 重算、suspicion flags)。<br>
-  这个页面没有任何远程 API 调用 —— 右键查看源码可以读完整逻辑。
+  Receipt v0.1 spec · <a href="https://github.com/bbismm/receipt" target="_blank">github.com/bbismm/receipt</a><br>
+  This is the operator-facing view. Auditors / developers: see the
+  <a href="./index.html">technical verifier</a> (raw fields, hash recompute, suspicion flags).<br>
+  No remote API calls happen on this page. Right-click → View Source to read the full logic.
 </div>
 
 <script>
-// ── 加载默认 chain ──
+// ── Default chain to load ──
 const DEFAULT_CHAIN_PATH = "shadow-chain.jsonl";
 
-// ── 已知 agent 翻译表 ──
+// ── Known-agent translations ──
 const AGENT_TRANSLATIONS = {
-  "iBitLabs/sniper-v5.1-shadow":   { who: "iBitLabs · SOL 永续 · 影子实验(纸面账户)", note: "和真实账户跑同一份策略,但不动真钱。用来对比" },
-  "iBitLabs/sniper-v5.1-live":     { who: "iBitLabs · SOL 永续 · 实盘($1k → $10k 实验)", note: "真实账户。这是 iBitLabs 的旗舰公开实验" },
-  "iBitLabs/sniper-v5.1-eth_paper":{ who: "iBitLabs · ETH 永续 · 纸面实验", note: "ETH 信号研究中,纸面账户" },
-  "iBitLabs/sniper-v5.1":          { who: "iBitLabs · SOL 永续 · 实盘", note: "" }, // 老的 agent name,Phase A.1 之前
-  "example/code-writing-agent-v0.1":{ who: "Demo · 写代码的 AI", note: "示例 chain。展示 receipt 协议如何记录'AI 改了哪个文件、对没对、有没有偷偷动别处'" },
+  "iBitLabs/sniper-v5.1-shadow":    { who: "iBitLabs · SOL perp · shadow experiment (paper account)", note: "Runs the same strategy as the live account with no real money. Used for A/B comparison." },
+  "iBitLabs/sniper-v5.1-live":      { who: "iBitLabs · SOL perp · live ($1k → $10k experiment)", note: "Real account. iBitLabs's flagship public experiment." },
+  "iBitLabs/sniper-v5.1-eth_paper": { who: "iBitLabs · ETH perp · paper experiment", note: "ETH signal research, paper account." },
+  "iBitLabs/sniper-v5.1":           { who: "iBitLabs · SOL perp · live (legacy agent id, pre Phase A.1)", note: "" },
+  "example/code-writing-agent-v0.1":{ who: "Demo · code-writing AI", note: "Sample chain showing how Receipt records what a coding agent edited, whether the edit matched its stated intent, and whether it silently touched anything else." },
 };
 
-// ── 事件 kind 翻译 ──
+// ── Event-kind translations (polymorphic — handle both trading and code-AI shapes) ──
 const KIND_TEMPLATES = {
   heartbeat: {
     icon: "💗",
     klass: "",
     render: (d) => ({
-      what: `心跳 — ${d.status === "scanning" ? "扫单中" : (d.status || "在线")}`,
-      extra: d.latency_ms != null ? `延迟 ${d.latency_ms} ms` : ""
+      what: `Pulse — ${d.status === "scanning" ? "scanning for signals" : (d.status || "alive")}`,
+      extra: d.latency_ms != null ? `${d.latency_ms} ms latency` : ""
     })
   },
   claim: {
     icon: "🎯",
     klass: "",
-    render: (d) => ({
-      what: `打算 ${actionZh(d.action)} ${d.symbol || ""} ${d.size != null ? d.size + " 张" : ""}` +
-            (d.price_intended != null ? ` @ $${d.price_intended}` : ""),
-      extra: d.reason || ""
-    })
+    render: (d) => {
+      // Code-writing AI claim shape
+      if (d.target_file || d.intent) {
+        return {
+          what: `Plans to ${d.action || "edit"} ${d.target_file || "(unspecified file)"}` +
+                (d.intent ? ` — ${d.intent}` : ""),
+          extra: d.repo ? `repo: ${d.repo}` : (d.user_prompt_hash ? "user prompt hashed for anti-drift check" : "")
+        };
+      }
+      // Trading claim shape
+      return {
+        what: `Plans to ${actionEn(d.action)} ${d.symbol || ""}` +
+              (d.size != null ? ` (${d.size} contracts)` : "") +
+              (d.price_intended != null ? ` at $${d.price_intended}` : ""),
+        extra: (d.reasoning && d.reasoning[0]) || d.reason || ""
+      };
+    }
   },
   external_action: {
     icon: "📤",
     klass: "",
-    render: (d) => ({
-      what: `把请求发给 ${d.venue || "外部"}${d.request && d.request.method ? " · " + d.request.method : ""}${d.request && d.request.endpoint ? " " + d.request.endpoint : ""}`,
-      extra: d.response && d.response.status ? `返回 ${d.response.status}` : ""
-    })
+    render: (d) => {
+      const req = d.request || {};
+      const res = d.response || {};
+      // Code-writing AI: filesystem write
+      if (d.venue === "filesystem") {
+        return {
+          what: `Wrote ${req.path || "(file)"}${res.bytes_written != null ? ` — ${res.bytes_written} bytes` : ""}`,
+          extra: req.pre_edit_hash ? `pre-edit hash recorded` : ""
+        };
+      }
+      // Code-writing AI: subprocess (build / test / lint)
+      if (d.venue === "subprocess") {
+        const ok = res.status === 0;
+        return {
+          what: `Ran ${req.command || req.operation || "(command)"} — exit ${res.status}`,
+          extra: ok ? "" : (res.stderr || "non-zero exit").toString().slice(0, 80)
+        };
+      }
+      // Trading: API call
+      return {
+        what: `Sent ${req.method || "request"} to ${d.venue || "external"}` +
+              (req.endpoint ? ` (${req.endpoint})` : ""),
+        extra: res.status != null ? `response ${res.status}` : ""
+      };
+    }
   },
   verified: {
     icon: "✅",
@@ -221,11 +244,26 @@ const KIND_TEMPLATES = {
       const sizeOK = m.size !== false;
       const priceOK = m.price_match !== false;
       const allOK = idOK && sizeOK && priceOK;
+      const failedFields = [!idOK && "ID didn't match", !sizeOK && "size off", !priceOK && "price out of tolerance"].filter(Boolean).join(" / ");
+
+      // Code-writing AI verified (target is a file path)
+      if (m.symbol && (m.symbol.includes("/") || /\.(py|ts|js|go|rs|java|md|sh|html)$/.test(m.symbol))) {
+        return {
+          what: allOK
+            ? `${d.source || "verifier"} confirmed edit to ${m.symbol}` +
+              (m.lines_added != null ? ` — ${m.lines_added} lines added` : "")
+            : `Edit to ${m.symbol} flagged: ${failedFields}`,
+          extra: d.summary || (allOK ? "claim matches what's on disk" : "needs human review")
+        };
+      }
+      // Trading verified
       return {
         what: allOK
-          ? `${d.source || "外部"}确认成交${d.fill_price != null ? `,成交价 $${d.fill_price}` : ""}${d.filled_size != null ? `,${d.filled_size} 张` : ""}`
-          : `${d.source || "外部"}回执来了,但对账不齐:${[!idOK && "ID 不匹配", !sizeOK && "张数对不上", !priceOK && "成交价超出容差"].filter(Boolean).join(" / ")}`,
-        extra: allOK ? "本地账本和外部回执一致" : "需要人工审查"
+          ? `${d.source || "venue"} confirmed fill` +
+            (d.fill_price != null ? ` at $${d.fill_price}` : "") +
+            (d.filled_size != null ? ` (${d.filled_size} contracts)` : "")
+          : `${d.source || "venue"} returned a fill but reconciliation flagged: ${failedFields}`,
+        extra: allOK ? "local book matches venue record" : "needs human review"
       };
     }
   },
@@ -233,53 +271,66 @@ const KIND_TEMPLATES = {
     icon: "❌",
     klass: "fail",
     render: (d) => ({
-      what: `失败:${d.reason || d.error || "未注明原因"}`,
-      extra: d.claim_seq != null ? `针对意图 #${d.claim_seq}` : ""
+      what: `Failure (${d.phase || "?"} phase): ${d.message || d.error_type || "no message"}`,
+      extra: d.claim_seq != null ? `against intent #${d.claim_seq}${d.retryable ? " · retryable" : ""}` : ""
     })
   },
   reconciliation: {
     icon: "🔍",
     klass: "ok",
     render: (d) => {
-      const match = d.match === true || d.match === "true";
       const local = d.local || {};
       const ext = d.external || {};
-      const balanceLine = local.balance_usd != null && ext.balance_usd != null
-        ? `本地 $${local.balance_usd} / 外部 $${ext.balance_usd}`
-        : "余额已对比";
-      return {
-        what: `对账 ${match ? "通过" : "不一致"} — ${balanceLine}`,
-        extra: match ? "本地账本和交易所一致" : "本地与外部出现分歧,需要复核"
-      };
+      // Trading: balance check
+      if (local.balance_usd != null && ext.balance_usd != null) {
+        const match = local.balance_usd === ext.balance_usd;
+        return {
+          what: `Balance check ${match ? "passed" : "FAILED"} — local $${local.balance_usd} / venue $${ext.balance_usd}`,
+          extra: match ? "local book matches venue" : "drift detected — investigate"
+        };
+      }
+      // Code-AI: task/file check
+      if (d.matched != null || d.unmatched != null) {
+        return {
+          what: `Task check — ${d.matched || 0} matched, ${d.unmatched || 0} unmatched, ${d.errors || 0} errors`,
+          extra: d.summary || ""
+        };
+      }
+      return { what: `Reconciliation event`, extra: d.summary || "" };
     }
   },
   anchor: {
     icon: "⚓",
     klass: "ok",
     render: (d) => ({
-      what: `把这一段链锚定到 ${anchorZh(d.anchor_kind)}${d.anchor_uri ? ` (${shortUri(d.anchor_uri)})` : ""}`,
-      extra: "锚定之后再改这一段链外部能立刻发现"
+      what: `Anchored this chain segment to ${anchorEn(d.anchor_kind)}` +
+            (d.anchor_uri ? ` (${shortUri(d.anchor_uri)})` : ""),
+      extra: "anyone modifying the chain after this point can be detected externally"
     })
   },
   signal_rejected: {
     icon: "🚫",
     klass: "warn",
     render: (d) => ({
-      what: `信号被拒:${d.reason || "(未注明原因)"}`,
-      extra: d.signal ? `候选信号 ${d.signal}` : ""
+      what: `Signal rejected: ${d.rejected_by ? `by ${d.rejected_by} — ` : ""}${d.reason || "(no reason given)"}`,
+      extra: d.would_be_action ? `would-be action: ${d.would_be_action}` : ""
     })
   }
 };
 
-function actionZh(a) {
-  return ({"open_long":"做多","open_short":"做空","close":"平仓","close_long":"平多","close_short":"平空","tp":"止盈","sl":"止损"})[a] || a || "?";
+function actionEn(a) {
+  return ({"open_long":"go long","open_short":"go short","close":"close position",
+           "close_long":"close long","close_short":"close short","tp":"take profit",
+           "sl":"stop loss","edit_file":"edit","read_file":"read","write_file":"write"})[a] || a || "?";
 }
-function anchorZh(k) {
-  return ({"ipfs":"IPFS(去中心化存储)","btc_op_return":"比特币区块","ethereum":"以太坊","arweave":"Arweave 永久存储","twitter":"Twitter","moltbook":"Moltbook","github_commit":"GitHub commit"})[k] || k || "(未指明)";
+function anchorEn(k) {
+  return ({"ipfs":"IPFS (decentralized storage)","btc_op_return":"Bitcoin OP_RETURN",
+           "ethereum":"Ethereum","arweave":"Arweave (permanent storage)",
+           "twitter":"Twitter","moltbook":"Moltbook","github_commit":"GitHub commit"})[k] || k || "(unspecified)";
 }
-function shortUri(u) { return u && u.length > 36 ? u.slice(0, 28) + "…" : u; }
+function shortUri(u) { return u && u.length > 48 ? u.slice(0, 36) + "…" : u; }
 
-// ── 时间格式化 ──
+// ── Time formatters ──
 function fmtTime(ms) {
   if (!ms) return "";
   const d = new Date(ms);
@@ -288,20 +339,20 @@ function fmtTime(ms) {
   const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
   const isYesterday = d.toDateString() === yesterday.toDateString();
   const hm = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
-  if (isToday) return `今天 ${hm}`;
-  if (isYesterday) return `昨天 ${hm}`;
+  if (isToday) return `today ${hm}`;
+  if (isYesterday) return `yesterday ${hm}`;
   return `${d.getMonth()+1}/${d.getDate()} ${hm}`;
 }
 function fmtAge(ms) {
   if (!ms) return "—";
   const ageMin = (Date.now() - ms) / 60000;
-  if (ageMin < 2) return "刚刚";
-  if (ageMin < 60) return `${Math.floor(ageMin)} 分钟前`;
-  if (ageMin < 60*24) return `${Math.floor(ageMin/60)} 小时前`;
-  return `${Math.floor(ageMin/60/24)} 天前`;
+  if (ageMin < 2) return "just now";
+  if (ageMin < 60) return `${Math.floor(ageMin)} min ago`;
+  if (ageMin < 60*24) return `${Math.floor(ageMin/60)} hr ago`;
+  return `${Math.floor(ageMin/60/24)} days ago`;
 }
 
-// ── 加载 + 渲染 ──
+// ── Loading + rendering ──
 async function loadAndRender() {
   const path = document.getElementById("path").value.trim();
   const file = document.getElementById("file").files[0];
@@ -316,14 +367,15 @@ async function loadAndRender() {
       text = await r.text();
     }
   } catch (e) {
-    out.innerHTML = `<div class="err">没读到链文件:${e.message}<br><br>
-      默认会去本地服务器加载 <code>${DEFAULT_CHAIN_PATH}</code>。要看其它链,贴一个 URL 或者从下面 file picker 选一个 .jsonl 文件。</div>`;
+    out.innerHTML = `<div class="err">Couldn't read the chain file: ${e.message}<br><br>
+      By default this page loads <code>${DEFAULT_CHAIN_PATH}</code> from the local server.
+      To view another chain, paste a URL or use the file picker above to upload a .jsonl file.</div>`;
     return;
   }
   let events;
   try { events = text.split("\n").filter(l=>l.trim()).map(l=>JSON.parse(l)); }
-  catch (e) { out.innerHTML = `<div class="err">这不像一份合法的 jsonl 文件:${e.message}</div>`; return; }
-  if (events.length === 0) { out.innerHTML = `<div class="err">链是空的,什么 event 都没有。</div>`; return; }
+  catch (e) { out.innerHTML = `<div class="err">This doesn't look like valid JSONL: ${e.message}</div>`; return; }
+  if (events.length === 0) { out.innerHTML = `<div class="err">The chain is empty — no events to render.</div>`; return; }
 
   const t0 = performance.now();
   const verifyReport = await verifyChain(events);
@@ -358,16 +410,16 @@ function canonical(ev) {
 async function verifyChain(events) {
   let prev = GENESIS_PREV, expected = 0;
   for (const ev of events) {
-    if (ev.seq !== expected) return { status: "BROKEN", issue: `序号不连续:期望 ${expected},实际 ${ev.seq}` };
-    if (ev.prev_hash !== prev) return { status: "BROKEN", issue: `第 ${expected} 条 prev_hash 对不上前一条 hash` };
+    if (ev.seq !== expected) return { status: "BROKEN", issue: `sequence gap — expected ${expected}, got ${ev.seq}` };
+    if (ev.prev_hash !== prev) return { status: "BROKEN", issue: `at seq ${expected}, prev_hash doesn't match the previous event's hash` };
     const recomputed = HASH_PREFIX + await sha256hex(canonical(ev));
-    if (ev.hash !== recomputed) return { status: "BROKEN", issue: `第 ${expected} 条 hash 重算不一致 — 这一条被改过` };
+    if (ev.hash !== recomputed) return { status: "BROKEN", issue: `at seq ${expected}, recomputed hash doesn't match — this event was modified after being written` };
     prev = ev.hash; expected++;
   }
   return { status: "OK" };
 }
 
-// ── score (simplified 5-dim,人话 labels) ──
+// ── score (simplified 5-dim with plain-English labels) ──
 const REALTIME_TIERS = new Set(["exchange_realtime","exchange_delayed","api_verified"]);
 const HEARTBEAT_BUCKET_MS = 5*60*1000;
 const DEFAULT_WINDOW_MS = 7*24*3600*1000;
@@ -408,13 +460,13 @@ function computeScore(events, report) {
   const hasRecon = events.some(e=>e.kind==="reconciliation");
   const verifsAllTol = verifs.length === 0 || verifs.every(e => ((e.data.match||{}).tolerance_used) != null);
   let transparency_pts = 0;
-  if (hasError) transparency_pts += 33; else transparency_pts += 0;
-  if (hasRecon) transparency_pts += 34; else transparency_pts += 0;
+  if (hasError) transparency_pts += 33;
+  if (hasRecon) transparency_pts += 34;
   if (verifsAllTol) transparency_pts += 33;
 
   const anchors = events.filter(e=>e.kind==="anchor");
   let integrity_pts = 0;
-  if (anchors.length === 0) integrity_pts = 50; // chain valid 但无锚
+  if (anchors.length === 0) integrity_pts = 50;
   else {
     const a = anchors[anchors.length-1];
     const ageH = (last - a.ts)/3600000;
@@ -445,37 +497,37 @@ function computeScore(events, report) {
   if (!hasClaim) {
     verdict = "WAITING";
     verdictColor = "yellow";
-    headline = "链上只有心跳,还没看到交易行为";
-    why = "现在能确认的是:这个 AI 在按时报到。但它还没下过任何单 —— 一旦它开始下单,这里会出现完整的「打算→发请求→对账」三段式记录。当前的可信度评分天然就低,因为还没有可以验证的事情发生。";
+    headline = "The chain has heartbeats but no claims yet";
+    why = "What we can confirm right now: this AI is checking in regularly. But it hasn't taken any stated actions yet — once it does, you'll see a full claim → external_action → verified sequence appear here. The trust score is naturally low for now because there's nothing concrete to verify yet.";
   } else if (coverage >= 0.9 && (accuracy === null || accuracy >= 0.8) && (mismatches/verifs.length) <= 0.05
              && anchors.length && hasRecon && REALTIME_TIERS.has(tierMaj)) {
     verdict = "VERIFIED";
     verdictColor = "green";
-    headline = "这条链看起来一切正常";
-    why = "每笔交易意图都有对账,对账结果和外部交易所一致,链锚定到了不可篡改的外部存储,而且有定期对账事件。这是一份可以拿来当证据的工作日志。";
+    headline = "Everything checks out";
+    why = "Every stated intent has a reconciliation event, the reconciliations match the external truth source, the chain is anchored to immutable external storage, and there are periodic ground-truth checks. This is a working log you could take to a regulator.";
   } else if (coverage < 0.5 || (accuracy !== null && accuracy < 0.8) || !anchors.length || cons_pts < 30) {
     verdict = "WEAK";
     verdictColor = "red";
-    headline = "这条链证据不足";
-    why = "缺少一些关键的可信度证据 —— 看下方「为什么是这个分」明细。注意:链本身没有被篡改(hash 都对得上),但「没人在外部确认过它说的事」。";
+    headline = "This chain doesn't have enough evidence";
+    why = "Key verifiability evidence is missing — see the breakdown below. Note: the chain itself isn't tampered with (all the hashes match), but no one outside this agent has confirmed what it says happened.";
   } else {
     verdict = "MIXED";
     verdictColor = "yellow";
-    headline = "大部分对得上,但还有空间";
-    why = "链结构 OK、有交易记录,但还差一些证据 —— 比如外部锚定、定期对账、或者实时回执覆盖率。看下方明细。";
+    headline = "Most of it lines up, with some gaps";
+    why = "The chain is structurally fine and contains real activity, but some evidence is missing — like external anchoring, periodic reconciliation, or real-time venue confirmation. See the breakdown below.";
   }
 
-  // 简单 issue 列表
+  // human-readable issue list
   const issues = [];
-  if (anchors.length === 0) issues.push("链还没锚定到外部(IPFS / 比特币 OP_RETURN 等)。锚定之后,任何人改了这一段链外部都能立刻发现。");
+  if (anchors.length === 0) issues.push("The chain hasn't been anchored to anything external (IPFS, Bitcoin OP_RETURN, etc.). Once anchored, anyone modifying the chain after that point would be detectable.");
   else {
     const ageH = (last - anchors[anchors.length-1].ts)/3600000;
-    if (ageH > 24) issues.push(`上次外部锚定是 ${ageH.toFixed(0)} 小时前,超过 24h 算「过期」。`);
+    if (ageH > 24) issues.push(`Last external anchor was ${ageH.toFixed(0)}h ago — anything older than 24h is considered stale.`);
   }
-  if (!hasRecon && hasClaim) issues.push("还没出现过和交易所对账的事件。对账事件是「我说我有的钱 = 交易所说我有的钱」的明文证据。");
-  if (!hasError && claims.size >= 20) issues.push("跑了这么多笔从来没失败过,这本身有点不正常 —— 真实系统都会偶尔失败。如果失败被吞掉了,你看不到的就不是 receipt。");
-  if (tierMaj === "backfill_local") issues.push("目前的所有证据都是「事后回填」的,不是实时写入。回填可以伪造,实时记录的伪造门槛高得多。");
-  if (tierMaj === "manual") issues.push("证据都是人工标注的,没有机器回执。可信度上限有限。");
+  if (!hasRecon && hasClaim) issues.push("There's no reconciliation event yet. A reconciliation is the explicit proof that 'what the agent thinks it has' equals 'what the external source confirms it has'.");
+  if (!hasError && claims.size >= 20) issues.push("After this many stated actions, never seeing a single failure is suspicious — real systems fail occasionally. If failures are being swallowed silently, what you don't see is what you don't get a receipt for.");
+  if (tierMaj === "backfill_local") issues.push("All evidence so far is backfilled (written after the fact), not real-time. Backfill can be fabricated; real-time records have a much higher bar to fake.");
+  if (tierMaj === "manual") issues.push("All evidence is manually attested by the agent itself — no machine receipts. There's a ceiling on how much trust this can earn.");
 
   return {
     verdict, verdictColor, headline, why,
@@ -493,34 +545,34 @@ function computeScore(events, report) {
   };
 }
 
-// ── 渲染 ──
+// ── Rendering ──
 function dimClass(v) { return v >= 80 ? "high" : v >= 50 ? "mid" : "low"; }
 
 const DIM_META = {
   coverage: {
-    name: "意图 → 结果对应",
-    q: "AI 打算做的事,有没有都跟一个结果(成交 / 失败)?",
-    fix: "等链上出现交易意图(claim 事件)之后再看 —— 现在如果是 0,说明 AI 还没尝试下单。"
+    name: "Intent → outcome coverage",
+    q: "Does every stated intent get a corresponding outcome (success or failure)?",
+    fix: "Wait for the chain to contain claim events. If this is 0, the agent hasn't tried to take any action yet."
   },
   accuracy: {
-    name: "对账正确度",
-    q: "成交价、张数、订单 ID,和交易所回执对得上吗?",
-    fix: "本地记录 vs 外部回执的字段对比。差异越大,说明 AI 在自我汇报时和实际发生的有距离。"
+    name: "Reconciliation accuracy",
+    q: "When the agent confirms an outcome, does it match the external source byte-for-byte (price, size, ID, file hash)?",
+    fix: "Looks at the gap between what the agent reports vs. what an external source confirms. The bigger the gap, the more the agent's self-report diverges from reality."
   },
   consistency: {
-    name: "持续在线度",
-    q: "有没有诡异的沉默期?(比如 7 天里有 5 天没任何记录)",
-    fix: "心跳(heartbeat)间隔过长会扣分。理想状态:每 5 分钟一条心跳,7 天总共有 ~2016 个 5 分钟桶应该都有覆盖。"
+    name: "Persistent presence",
+    q: "Are there any suspicious silent periods? (e.g. 5 days of nothing in a 7-day window)",
+    fix: "Long gaps between heartbeats lose points. Ideal: a heartbeat every ~5 min, so a 7-day window has all ~2016 5-min buckets covered."
   },
   transparency: {
-    name: "坦白度",
-    q: "有报告过失败吗?有定期对过账吗?容差有写明吗?",
-    fix: "缺少 error 事件 / reconciliation 事件 / match.tolerance_used 都扣分。真实系统不会一直完美。"
+    name: "Honesty about failure",
+    q: "Has the agent ever reported a failure? Does it reconcile periodically? Are tolerances written down?",
+    fix: "Missing error events / reconciliation events / match.tolerance_used each lose points. Real systems aren't perfect — never reporting failure is itself a red flag."
   },
   integrity: {
-    name: "防篡改度",
-    q: "这一段链有没有锚定到外部不可篡改的地方?",
-    fix: "把链的 Merkle root 写到 IPFS / 比特币 OP_RETURN / Arweave,任何人都能独立验证「这一段链确实是当时那一段,没有被偷换」。"
+    name: "Tamper resistance",
+    q: "Has this chain been anchored to something external and immutable?",
+    fix: "Write the chain's Merkle root to IPFS / Bitcoin OP_RETURN / Arweave / a GitHub commit. Once anchored, anyone can independently verify the chain is the same one that existed at anchor time — no quiet edits possible."
   }
 };
 
@@ -530,63 +582,64 @@ function render(events, report, score, elapsedMs) {
     out.innerHTML = `
       <div class="verdict red">
         <div class="icon">⚠️</div>
-        <div class="headline">这条链有结构问题</div>
-        <div class="why">${report.issue}<br><br>这意味着链上的某一条 event 在被记录之后又被改过 —— 要么是 bug,要么是有人动了文件。无论哪种,这份 receipt 不能作为证据。</div>
+        <div class="headline">This chain has a structural problem</div>
+        <div class="why">${report.issue}<br><br>This means an event in the chain was modified after being written — either a bug, or someone edited the file directly. Either way, this receipt can't be used as evidence.</div>
       </div>
       <div class="foot" style="text-align:left;margin-top:24px;">
-        想看哪一条出问题,打开浏览器开发者工具 (Cmd+Option+I) 看 console.log,或者用 <a href="./index.html">完整验证页</a>。
+        To see which event broke, open browser DevTools (Cmd+Option+I) and check the console, or use the
+        <a href="./index.html">technical verifier</a>.
       </div>
     `;
     return;
   }
   if (!score) {
-    out.innerHTML = `<div class="err">链是空的。</div>`;
+    out.innerHTML = `<div class="err">The chain is empty.</div>`;
     return;
   }
 
-  const agentInfo = AGENT_TRANSLATIONS[score.agent] || { who: "未知 agent", note: "" };
+  const agentInfo = AGENT_TRANSLATIONS[score.agent] || { who: "Unknown agent", note: "" };
 
   let html = "";
 
-  // ── 顶部 verdict 块 ──
+  // verdict block
   const icons = { VERIFIED: "✅", MIXED: "⚠️", WEAK: "❌", WAITING: "⏳", BROKEN: "🚨" };
   html += `<div class="verdict ${score.verdictColor}">
     <div class="icon">${icons[score.verdict] || "•"}</div>
     <div class="headline">${score.headline}</div>
     <div class="why">${score.why}</div>
-    <div class="score">可信度分:<b>${score.score}</b> / 100${score.score < 40 ? ' · 但请先读上面这段解释' : ''}</div>
+    <div class="score">Trust score: <b>${score.score}</b> / 100${score.score < 40 ? ' · but read the explanation above first' : ''}</div>
   </div>`;
 
-  // ── agent identity ──
+  // agent identity
   html += `<div class="agent">
-    <div class="label">这是哪个 AI 的账本</div>
+    <div class="label">Which AI's ledger is this</div>
     <div class="name">${agentInfo.who}</div>
     ${agentInfo.note ? `<div style="margin-top:4px;font-size:13px;color:var(--muted);">${agentInfo.note}</div>` : ""}
     <div class="raw">agent id: ${escapeHtml(score.agent)}</div>
   </div>`;
 
-  // ── 关键数字 ──
+  // key numbers
   html += `<div class="stats">
-    <div class="stat"><div class="v">${score.summary.events}</div><div class="k">总记录数</div></div>
-    <div class="stat"><div class="v">${score.summary.claims}</div><div class="k">交易意图</div></div>
-    <div class="stat"><div class="v">${score.summary.verified}</div><div class="k">已成交确认</div></div>
-    <div class="stat"><div class="v">${score.summary.errors}</div><div class="k">报告过的失败</div></div>
-    <div class="stat"><div class="v">${score.summary.recons}</div><div class="k">外部对账次数</div></div>
-    <div class="stat"><div class="v">${fmtAge(score.tailTs)}</div><div class="k">最近一条</div></div>
+    <div class="stat"><div class="v">${score.summary.events}</div><div class="k">Total entries</div></div>
+    <div class="stat"><div class="v">${score.summary.claims}</div><div class="k">Stated intents</div></div>
+    <div class="stat"><div class="v">${score.summary.verified}</div><div class="k">Confirmed</div></div>
+    <div class="stat"><div class="v">${score.summary.errors}</div><div class="k">Reported failures</div></div>
+    <div class="stat"><div class="v">${score.summary.recons}</div><div class="k">Reconciliations</div></div>
+    <div class="stat"><div class="v">${fmtAge(score.tailTs)}</div><div class="k">Latest entry</div></div>
   </div>`;
 
-  // ── issue alerts ──
+  // issue alerts
   if (score.issues && score.issues.length) {
     html += `<div class="alerts">
-      <div class="a-head">为什么不是满分</div>
+      <div class="a-head">Why this isn't a perfect score</div>
       <ul>${score.issues.map(i => `<li>${i}</li>`).join("")}</ul>
     </div>`;
   }
 
-  // ── 时间线 ──
+  // timeline
   const recent = events.slice(-12).reverse();
   html += `<div class="section">
-    <h2>最近发生了什么</h2>
+    <h2>Recent activity</h2>
     <div class="events">`;
   for (const ev of recent) {
     const tpl = KIND_TEMPLATES[ev.kind];
@@ -598,7 +651,7 @@ function render(events, report, score, elapsedMs) {
       what = r.what;
       extra = r.extra || "";
     } else {
-      what = `${ev.kind}(未知 event 类型)`;
+      what = `${ev.kind} (unknown event type)`;
     }
     html += `<div class="event ${klass}">
       <div class="e-icon">${icon}</div>
@@ -610,14 +663,13 @@ function render(events, report, score, elapsedMs) {
     </div>`;
   }
   if (events.length > 12) {
-    html += `<div class="event-more" onclick="this.parentNode.querySelectorAll('.event.hidden').forEach(e=>e.classList.remove('hidden')); this.remove();">还有 ${events.length - 12} 条,点开看 ↓</div>`;
-    // 把更早的 12+ 条 hidden 加进 DOM
+    html += `<div class="event" style="justify-content:center;text-align:center;color:var(--muted);font-size:12px;grid-template-columns:1fr;">+ ${events.length - 12} earlier entries — see the technical verifier for the full chain</div>`;
   }
   html += `</div></div>`;
 
-  // ── 五维分数明细 ──
+  // 5-dim breakdown
   html += `<div class="section">
-    <h2>为什么是这个分</h2>
+    <h2>Why this score</h2>
     <div class="dims">`;
   for (const [k, v] of Object.entries(score.dims)) {
     const meta = DIM_META[k];
@@ -632,30 +684,33 @@ function render(events, report, score, elapsedMs) {
   }
   html += `</div></div>`;
 
-  // ── 验证证明 ──
+  // verification proof
   html += `<div class="section">
-    <h2>这个验证是怎么完成的</h2>
+    <h2>How this verification happened</h2>
     <div style="padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:10px;font-size:13px;line-height:1.7;">
-      浏览器内重新计算了链上每一条 event 的 SHA-256 hash,比对每一条的 <code>prev_hash</code> 是不是上一条的 hash。
-      ${events.length} 条全部通过(<b>${elapsedMs} ms</b>)。任何人都可以做这件事 —— 右键查看本页源码,逻辑都在 <code>verifyChain()</code> 函数里。<br>
-      这一步只能证明「这条链没有被改过」。「链上声称的事是不是真的发生过」需要看里面有没有外部锚定 + 对账事件。
+      The browser recomputed the SHA-256 hash of every event in the chain and checked that each
+      <code>prev_hash</code> matches the previous event's <code>hash</code>. All ${events.length}
+      events passed (in <b>${elapsedMs} ms</b>). Anyone can do this — right-click → View Source and look
+      at the <code>verifyChain()</code> function.<br>
+      This step only proves the chain hasn't been edited after the fact. Whether the events on the chain
+      actually correspond to real-world events depends on external anchoring + reconciliation evidence.
     </div>
   </div>`;
 
-  // ── 折叠技术细节 ──
+  // folded technical details
   html += `<details>
-    <summary>↓ 想看技术字段(给开发者 / 审计员)</summary>
+    <summary>↓ Technical fields (for developers / auditors)</summary>
     <table class="meta-tbl">
-      <tr><td>链长度</td><td>${events.length} 条</td></tr>
-      <tr><td>首条时间戳</td><td>${new Date(score.headTs).toISOString()}</td></tr>
-      <tr><td>末条时间戳</td><td>${new Date(score.tailTs).toISOString()}</td></tr>
+      <tr><td>Chain length</td><td>${events.length} events</td></tr>
+      <tr><td>First event ts</td><td>${new Date(score.headTs).toISOString()}</td></tr>
+      <tr><td>Last event ts</td><td>${new Date(score.tailTs).toISOString()}</td></tr>
       <tr><td>agent id</td><td>${escapeHtml(score.agent)}</td></tr>
       <tr><td>trust tier (majority)</td><td>${escapeHtml(score.tierMaj)}</td></tr>
-      <tr><td>原始分</td><td>${score.score}</td></tr>
+      <tr><td>raw score</td><td>${score.score}</td></tr>
     </table>
-    <div style="margin-top:14px;color:var(--muted);font-size:12px;">最后 3 条 raw JSON:</div>
+    <div style="margin-top:14px;color:var(--muted);font-size:12px;">Last 3 events (raw JSON):</div>
     <pre>${events.slice(-3).map(e => JSON.stringify(e, null, 2)).join("\n\n")}</pre>
-    <div style="margin-top:8px;"><a href="./index.html" style="color:var(--blue);">→ 切到完整验证页(包含 suspicion flags / mismatch examples / unclamped score 等)</a></div>
+    <div style="margin-top:8px;"><a href="./index.html" style="color:var(--blue);">→ Switch to the technical verifier (suspicion flags, mismatch examples, unclamped score, etc.)</a></div>
   </details>`;
 
   out.innerHTML = html;
@@ -666,7 +721,6 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
 }
 
-// 页面加载即自动渲染(default chain)
 window.addEventListener("load", loadAndRender);
 </script>
 </body>
