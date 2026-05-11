@@ -157,8 +157,8 @@
 
 <div class="foot">
   Receipt v0.1 spec · <a href="https://github.com/bbismm/receipt" target="_blank">github.com/bbismm/receipt</a><br>
-  This is the operator-facing view. Auditors / developers: see the
-  <a href="./index.html">technical verifier</a> (raw fields, hash recompute, suspicion flags).<br>
+  Watching multiple agents at once? Use the <a href="./monitor.html">multi-agent monitor</a>. ·
+  Auditors / developers: see the <a href="./index.html">technical verifier</a> (raw fields, hash recompute, suspicion flags).<br>
   No remote API calls happen on this page. Right-click → View Source to read the full logic.
 </div>
 
@@ -354,7 +354,12 @@ function fmtAge(ms) {
 
 // ── Loading + rendering ──
 async function loadAndRender() {
-  const path = document.getElementById("path").value.trim();
+  // Honor ?url=... query param (set by monitor.html cards) on first load
+  const urlParam = new URLSearchParams(window.location.search).get('url');
+  const inputField = document.getElementById("path");
+  if (urlParam && !inputField.value) inputField.value = urlParam;
+
+  const path = inputField.value.trim();
   const file = document.getElementById("file").files[0];
   const out = document.getElementById("out");
   let text;

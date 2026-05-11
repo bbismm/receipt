@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Agent Monitor</title>
+<style>
+  :root {
+    --bg: #faf7f1; --fg: #1f1f23; --muted: #6b6b73;
+    --card: #ffffff; --border: #e7e2d6;
+    --green: #2c8a4a; --green-soft: #e8f3ec;
+    --yellow: #c98a16; --yellow-soft: #f7eed8;
+    --red: #b53939; --red-soft: #f4e0e0;
+    --blue: #2c5aa0;
+    --flash: #fff3a8;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1714; --fg: #ede8db; --muted: #8a8579;
+      --card: #25211c; --border: #3a342c;
+      --green: #62b97d; --green-soft: rgba(98,185,125,0.13);
+      --yellow: #e0a73a; --yellow-soft: rgba(224,167,58,0.14);
+      --red: #d97070; --red-soft: rgba(217,112,112,0.14);
+      --blue: #7aa4d6; --flash: rgba(255,243,168,0.25);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI",
+              "Helvetica Neue", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 22px 80px; }
+
+  /* header */
+  .hdr { display: flex; justify-content: space-between; align-items: baseline;
+         margin-bottom: 8px; flex-wrap: wrap; gap: 12px; }
+  .hdr h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
+  .hdr .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .controls { display: flex; gap: 8px; align-items: center; }
+  .controls select, .controls button { font: inherit; padding: 6px 12px; border-radius: 6px;
+                  border: 1px solid var(--border); background: var(--card); color: var(--fg);
+                  cursor: pointer; font-size: 12px; }
+  .controls .live { background: var(--red); color: white; border-color: var(--red);
+                    font-weight: 600; }
+  .controls .live.paused { background: var(--card); color: var(--muted); border-color: var(--border); }
+  .controls .live .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                         background: white; margin-right: 6px; vertical-align: middle;
+                         animation: pulse 1.5s ease-in-out infinite; }
+  .controls .live.paused .dot { background: var(--muted); animation: none; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .sub a { color: var(--blue); text-decoration: none; }
+  .sub a:hover { text-decoration: underline; }
+
+  /* status cards row */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+           gap: 12px; margin-bottom: 28px; }
+  .card { background: var(--card); border: 2px solid var(--border); border-radius: 12px;
+          padding: 14px 16px; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+  .card.green  { border-color: var(--green);  background: var(--green-soft); }
+  .card.yellow { border-color: var(--yellow); background: var(--yellow-soft); }
+  .card.red    { border-color: var(--red);    background: var(--red-soft); }
+  .card.muted  { opacity: 0.65; }
+  .card .c-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .card .c-name { font-weight: 600; font-size: 14px; }
+  .card .c-verdict { font-size: 18px; line-height: 1; }
+  .card .c-score { font: 600 22px/1.2 var(--mono); margin: 4px 0 6px 0; }
+  .card.green .c-score { color: var(--green); }
+  .card.yellow .c-score { color: var(--yellow); }
+  .card.red .c-score { color: var(--red); }
+  .card .c-detail { color: var(--muted); font-size: 12px; line-height: 1.5; }
+  .card .c-meta { color: var(--muted); font-size: 11px; margin-top: 8px;
+                  font-family: var(--mono); display: flex; justify-content: space-between; }
+
+  /* unified feed */
+  .feed-head { display: flex; justify-content: space-between; align-items: baseline;
+               margin-bottom: 10px; }
+  .feed-head h2 { font-size: 13px; color: var(--muted); text-transform: uppercase;
+                  letter-spacing: 0.6px; margin: 0; font-weight: 600; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter { padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border);
+            background: var(--card); color: var(--muted); cursor: pointer;
+            font-size: 11px; font-family: var(--mono); user-select: none; }
+  .filter.active { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+  .feed { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+          overflow: hidden; }
+  .row { display: grid; grid-template-columns: 32px auto 1fr auto;
+         gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border);
+         align-items: baseline; }
+  .row:last-child { border-bottom: 0; }
+  .row.flash { animation: flash 1.8s ease-out; }
+  @keyframes flash {
+    0%   { background: var(--flash); }
+    100% { background: transparent; }
+  }
+  .row.fail { background: var(--red-soft); }
+  .row.ok   { background: var(--green-soft); }
+  .row.warn { background: var(--yellow-soft); }
+  .row.heartbeat { opacity: 0.45; }
+  .row.heartbeat .r-body .what { font-size: 13px; }
+  .row .r-icon { font-size: 16px; }
+  .row .r-tag { font: 600 11px var(--mono); padding: 2px 8px; border-radius: 99px;
+                color: white; white-space: nowrap; }
+  .row .r-body .what { font-size: 14px; line-height: 1.4; }
+  .row .r-body .extra { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .row .r-time { font: 11px var(--mono); color: var(--muted); white-space: nowrap; padding-top: 3px; }
+
+  .empty { padding: 60px 20px; text-align: center; color: var(--muted); }
+
+  .foot { color: var(--muted); font-size: 12px; margin-top: 36px; text-align: center;
+          line-height: 1.7; }
+  .foot a { color: var(--muted); }
+
+  .err-banner { padding: 10px 14px; border-radius: 8px; background: var(--red-soft);
+                border: 1px solid var(--red); color: var(--red); font-size: 12px;
+                margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="hdr">
+    <h1>AI Agent Monitor</h1>
+    <div class="controls">
+      <select id="intervalSel">
+        <option value="3000">3s</option>
+        <option value="8000" selected>8s</option>
+        <option value="30000">30s</option>
+        <option value="0">manual</option>
+      </select>
+      <button id="liveBtn" class="live"><span class="dot"></span><span id="liveLabel">Live</span></button>
+    </div>
+  </div>
+  <div class="sub">
+    Watching <b id="agentCount">3</b> agents · auto-refreshing every <b id="intervalDisplay">8s</b> ·
+    last poll <b id="lastPoll">never</b> ·
+    <a href="dashboard.html">single-agent deep-dive →</a>
+  </div>
+
+  <div id="errBanner" style="display:none"></div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="feed-head">
+    <h2>Recent activity across all agents</h2>
+    <div class="filters" id="filters">
+      <span class="filter active" data-filter="all">all</span>
+      <span class="filter" data-filter="substantive">no heartbeats</span>
+    </div>
+  </div>
+  <div class="feed" id="feed">
+    <div class="empty">Loading agent chains…</div>
+  </div>
+</main>
+
+<div class="foot">
+  Receipt v0.1 · <a href="https://github.com/bbismm/receipt" target="_blank">github.com/bbismm/receipt</a> ·
+  <a href="dashboard.html">single-agent dashboard</a> ·
+  <a href="index.html">technical verifier</a><br>
+  All verification happens in your browser. No data leaves this page.
+</div>
+
+<script>
+// ──────────────────────────────────────────────────────────────────────
+// Known agents (override via URL param ?agents=url1,url2,...)
+// ──────────────────────────────────────────────────────────────────────
+const DEFAULT_AGENTS = [
+  { url: "shadow-chain.jsonl",                  short: "shadow", color: "#7c4dff" },
+  { url: "sniper-live.realtime.receipt.jsonl",  short: "live",   color: "#e91e63" },
+  { url: "code-writing-demo.jsonl",             short: "demo",   color: "#26a69a" },
+];
+
+// override via URL param
+function getAgentList() {
+  const p = new URLSearchParams(window.location.search).get('agents');
+  if (!p) return DEFAULT_AGENTS;
+  return p.split(',').map((u, i) => ({
+    url: u.trim(),
+    short: u.split('/').pop().replace(/\.jsonl$/, '').slice(0, 12),
+    color: ["#7c4dff", "#e91e63", "#26a69a", "#ff9800", "#5c6bc0", "#43a047"][i % 6],
+  }));
+}
+
+const AGENTS = getAgentList();
+
+// ──────────────────────────────────────────────────────────────────────
+// Known-agent display translations
+// ──────────────────────────────────────────────────────────────────────
+const AGENT_TRANSLATIONS = {
+  "iBitLabs/sniper-v5.1-shadow":    { who: "iBitLabs · SOL perp · shadow (paper)" },
+  "iBitLabs/sniper-v5.1-live":      { who: "iBitLabs · SOL perp · live ($1k experiment)" },
+  "iBitLabs/sniper-v5.1-eth_paper": { who: "iBitLabs · ETH perp · paper" },
+  "iBitLabs/sniper-v5.1":           { who: "iBitLabs · SOL perp · live (legacy id)" },
+  "example/code-writing-agent-v0.1":{ who: "Demo · code-writing AI" },
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// State
+// ──────────────────────────────────────────────────────────────────────
+const state = {
+  agents: {},     // url -> { events, score, verifyReport, lastModified, lastFetch, error, ... }
+  pollMs: 8000,
+  live: true,
+  timer: null,
+  filter: 'all',  // 'all' | 'substantive'
+  knownSeqs: {},  // url -> set of seqs we've already rendered (for flash detection)
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// Helpers reused from dashboard
+// ──────────────────────────────────────────────────────────────────────
+const HASH_PREFIX = "sha256:";
+const GENESIS_PREV = HASH_PREFIX + "0".repeat(64);
+const CANONICAL_KEYS = ["v","schema_version","ts","seq","agent","kind","data","prev_hash"];
+const REALTIME_TIERS = new Set(["exchange_realtime","exchange_delayed","api_verified"]);
+const HEARTBEAT_BUCKET_MS = 5*60*1000;
+const DEFAULT_WINDOW_MS = 7*24*3600*1000;
+const PERM_ANCHORS = new Set(["btc_op_return","ethereum","arweave"]);
+
+async function sha256hex(text) {
+  const buf = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2,"0")).join("");
+}
+function jsonCanonical(v) {
+  if (v === null) return "null";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "number") return JSON.stringify(v);
+  if (typeof v === "string") return JSON.stringify(v);
+  if (Array.isArray(v)) return "[" + v.map(jsonCanonical).join(",") + "]";
+  return "{" + Object.keys(v).sort().map(k => JSON.stringify(k)+":"+jsonCanonical(v[k])).join(",") + "}";
+}
+function canonical(ev) {
+  const body = {};
+  for (const k of CANONICAL_KEYS) if (k in ev) body[k] = ev[k];
+  return jsonCanonical(body);
+}
+async function verifyChain(events) {
+  let prev = GENESIS_PREV, expected = 0;
+  for (const ev of events) {
+    if (ev.seq !== expected) return { status: "BROKEN", issue: `seq gap @ ${expected}` };
+    if (ev.prev_hash !== prev) return { status: "BROKEN", issue: `prev_hash mismatch @ ${expected}` };
+    const recomputed = HASH_PREFIX + await sha256hex(canonical(ev));
+    if (ev.hash !== recomputed) return { status: "BROKEN", issue: `hash mismatch @ ${expected}` };
+    prev = ev.hash; expected++;
+  }
+  return { status: "OK" };
+}
+
+function computeScore(events, report) {
+  if (events.length === 0) return null;
+  if (report.status === "BROKEN") {
+    return { verdict: "BROKEN", verdictColor: "red", score: 0, issue: report.issue };
+  }
+  const claims = new Set(events.filter(e=>e.kind==="claim").map(e=>e.seq));
+  const terminated = new Set();
+  for (const e of events) {
+    const cs = (e.data||{}).claim_seq;
+    if ((e.kind==="verified"||e.kind==="error") && cs!=null) terminated.add(cs);
+  }
+  const covered = [...claims].filter(c=>terminated.has(c)).length;
+  const coverage = claims.size === 0 ? null : covered / claims.size;
+  const verifs = events.filter(e=>e.kind==="verified");
+  const verified_ok = verifs.filter(e => ((e.data.match||{}).id_match !== false)).length;
+  const accuracy = verifs.length ? verified_ok / verifs.length : null;
+  const last = events[events.length-1].ts;
+  const windowStart = last - DEFAULT_WINDOW_MS;
+  const totalBuckets = Math.max(1, Math.floor(DEFAULT_WINDOW_MS / HEARTBEAT_BUCKET_MS));
+  const buckets = new Set();
+  for (const e of events) {
+    const b = Math.floor((e.ts - windowStart) / HEARTBEAT_BUCKET_MS);
+    if (b >= 0 && b < totalBuckets) buckets.add(b);
+  }
+  const consistency = buckets.size / totalBuckets;
+  const hasError = events.some(e=>e.kind==="error");
+  const hasRecon = events.some(e=>e.kind==="reconciliation");
+  const verifsAllTol = verifs.length === 0 || verifs.every(e => ((e.data.match||{}).tolerance_used) != null);
+  let trans_pts = 0;
+  if (hasError) trans_pts += 33;
+  if (hasRecon) trans_pts += 34;
+  if (verifsAllTol) trans_pts += 33;
+  const anchors = events.filter(e=>e.kind==="anchor");
+  let int_pts = 0;
+  if (anchors.length === 0) int_pts = 50;
+  else {
+    const a = anchors[anchors.length-1];
+    const ageH = (last - a.ts)/3600000;
+    if (PERM_ANCHORS.has(a.data.anchor_kind)) int_pts = 100;
+    else if (a.data.anchor_kind === "ipfs") int_pts = 95;
+    else int_pts = 80;
+    if (ageH > 24)  int_pts -= 30;
+    if (ageH > 168) int_pts = Math.min(int_pts, 30);
+    int_pts = Math.max(0, Math.min(100, int_pts));
+  }
+  const cov_pts = coverage === null ? 0 : Math.round(coverage * 100);
+  const acc_pts = accuracy === null ? 0 : Math.round(accuracy * 100);
+  const cons_pts = Math.round(Math.min(1, consistency) * 100);
+  const raw = Math.round((cov_pts + acc_pts + cons_pts + trans_pts + int_pts) / 5);
+  const tierCounts = {};
+  for (const e of events) {
+    const t = (e.data || {}).trust_tier;
+    if (t) tierCounts[t] = (tierCounts[t]||0)+1;
+  }
+  const tierMaj = Object.entries(tierCounts).sort((a,b)=>b[1]-a[1])[0]?.[0] || "manual";
+  let verdict, color;
+  const hasClaim = claims.size > 0;
+  if (!hasClaim) { verdict = "WAITING"; color = "yellow"; }
+  else if (coverage >= 0.9 && (accuracy === null || accuracy >= 0.8)
+           && anchors.length && hasRecon && REALTIME_TIERS.has(tierMaj)) {
+    verdict = "VERIFIED"; color = "green";
+  } else if (coverage < 0.5 || (accuracy !== null && accuracy < 0.8) || !anchors.length || cons_pts < 30) {
+    verdict = "WEAK"; color = "red";
+  } else {
+    verdict = "MIXED"; color = "yellow";
+  }
+  return { verdict, verdictColor: color, score: raw, agent: events[0].agent, latestTs: last, claims: claims.size };
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Event-kind rendering — polymorphic over trading + code-AI shapes
+// ──────────────────────────────────────────────────────────────────────
+const KIND_TEMPLATES = {
+  heartbeat: {
+    icon: "💗", klass: "heartbeat",
+    render: (d) => ({ what: `Pulse — ${d.status === "scanning" ? "scanning" : (d.status || "alive")}`,
+                      extra: d.latency_ms != null ? `${d.latency_ms} ms` : "" })
+  },
+  claim: {
+    icon: "🎯", klass: "",
+    render: (d) => {
+      if (d.target_file || d.intent) return {
+        what: `Plans to ${d.action || "edit"} ${d.target_file || "(file)"}${d.intent ? ` — ${d.intent}` : ""}`,
+        extra: d.repo || ""
+      };
+      return {
+        what: `Plans to ${actionEn(d.action)} ${d.symbol || ""}` +
+              (d.size != null ? ` (${d.size})` : "") +
+              (d.price_intended != null ? ` @ $${d.price_intended}` : ""),
+        extra: (d.reasoning && d.reasoning[0]) || ""
+      };
+    }
+  },
+  external_action: {
+    icon: "📤", klass: "",
+    render: (d) => {
+      const req = d.request || {}, res = d.response || {};
+      if (d.venue === "filesystem") return {
+        what: `Wrote ${req.path || "(file)"}${res.bytes_written != null ? ` — ${res.bytes_written}B` : ""}`,
+        extra: ""
+      };
+      if (d.venue === "subprocess") return {
+        what: `Ran ${req.command || req.operation || "(cmd)"} — exit ${res.status}`,
+        extra: res.status !== 0 ? (res.stderr || "").toString().slice(0, 60) : ""
+      };
+      return {
+        what: `→ ${d.venue || "external"} ${req.method || ""} ${req.endpoint || ""}`,
+        extra: res.status != null ? `response ${res.status}` : ""
+      };
+    }
+  },
+  verified: {
+    icon: "✅", klass: "ok",
+    render: (d) => {
+      const m = d.match || {};
+      const ok = m.id_match !== false && m.size !== false && m.price_match !== false;
+      if (m.symbol && (m.symbol.includes("/") || /\.(py|ts|js|go|rs|java|md)$/.test(m.symbol))) {
+        return { what: ok ? `Edit confirmed: ${m.symbol}` : `Edit flagged: ${m.symbol}`,
+                 extra: d.summary || "" };
+      }
+      return { what: ok ? `${d.source || "venue"} confirmed${d.fill_price ? ` @ $${d.fill_price}` : ""}${d.filled_size != null ? ` (${d.filled_size})` : ""}`
+                       : `${d.source || "venue"} flagged reconciliation issue`,
+               extra: "" };
+    }
+  },
+  error: {
+    icon: "❌", klass: "fail",
+    render: (d) => ({ what: `Failure (${d.phase || "?"}): ${d.message || d.error_type || "?"}`,
+                      extra: d.retryable ? "retryable" : "" })
+  },
+  reconciliation: {
+    icon: "🔍", klass: "ok",
+    render: (d) => {
+      const l = d.local || {}, e = d.external || {};
+      if (l.balance_usd != null && e.balance_usd != null) {
+        const m = l.balance_usd === e.balance_usd;
+        return { what: `Balance ${m ? "OK" : "MISMATCH"}: local $${l.balance_usd} / venue $${e.balance_usd}`, extra: "" };
+      }
+      if (d.matched != null) return { what: `Task check: ${d.matched} matched, ${d.unmatched || 0} unmatched, ${d.errors || 0} errors`, extra: "" };
+      return { what: `Reconciliation event`, extra: d.summary || "" };
+    }
+  },
+  anchor: {
+    icon: "⚓", klass: "ok",
+    render: (d) => ({ what: `Anchored to ${anchorEn(d.anchor_kind)}`,
+                      extra: d.anchor_uri ? d.anchor_uri.slice(0, 50) + (d.anchor_uri.length > 50 ? "…" : "") : "" })
+  },
+  signal_rejected: {
+    icon: "🚫", klass: "warn",
+    render: (d) => ({ what: `Signal rejected: ${d.reason || ""}`,
+                      extra: d.would_be_action ? `would-be: ${d.would_be_action}` : "" })
+  }
+};
+
+function actionEn(a) {
+  return ({"open_long":"long","open_short":"short","close":"close","close_long":"close long",
+           "close_short":"close short","tp":"TP","sl":"SL","edit_file":"edit"})[a] || a || "?";
+}
+function anchorEn(k) {
+  return ({"ipfs":"IPFS","btc_op_return":"Bitcoin","ethereum":"Ethereum","arweave":"Arweave",
+           "github_commit":"GitHub commit","twitter":"Twitter","moltbook":"Moltbook"})[k] || k || "?";
+}
+
+function fmtAge(ms) {
+  if (!ms) return "—";
+  const sec = (Date.now() - ms) / 1000;
+  if (sec < 5) return "just now";
+  if (sec < 60) return `${Math.floor(sec)}s ago`;
+  if (sec < 3600) return `${Math.floor(sec/60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec/3600)}h ago`;
+  return `${Math.floor(sec/86400)}d ago`;
+}
+function fmtClock(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const today = new Date();
+  const isToday = d.toDateString() === today.toDateString();
+  const hm = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
+  if (isToday) return hm;
+  return `${d.getMonth()+1}/${d.getDate()} ${hm.slice(0,5)}`;
+}
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Polling
+// ──────────────────────────────────────────────────────────────────────
+async function pollOne(agent) {
+  const prev = state.agents[agent.url] || {};
+  const headers = {};
+  if (prev.lastModified) headers['If-Modified-Since'] = prev.lastModified;
+  let r;
+  try {
+    r = await fetch(agent.url, { headers, cache: 'no-cache' });
+  } catch (e) {
+    state.agents[agent.url] = { ...agent, error: `network: ${e.message}`, lastFetch: Date.now() };
+    return;
+  }
+  if (r.status === 304) {
+    state.agents[agent.url] = { ...prev, lastFetch: Date.now() };
+    return;
+  }
+  if (r.status === 404) {
+    state.agents[agent.url] = { ...agent, error: 'no chain yet', lastFetch: Date.now() };
+    return;
+  }
+  if (!r.ok) {
+    state.agents[agent.url] = { ...agent, error: `HTTP ${r.status}`, lastFetch: Date.now() };
+    return;
+  }
+  const text = await r.text();
+  let events;
+  try { events = text.split("\n").filter(l => l.trim()).map(l => JSON.parse(l)); }
+  catch (e) {
+    state.agents[agent.url] = { ...agent, error: `parse: ${e.message}`, lastFetch: Date.now() };
+    return;
+  }
+  if (events.length === 0) {
+    state.agents[agent.url] = { ...agent, error: 'empty chain', lastFetch: Date.now() };
+    return;
+  }
+  const verifyReport = await verifyChain(events);
+  const score = computeScore(events, verifyReport);
+  state.agents[agent.url] = {
+    ...agent,
+    events, score, verifyReport,
+    lastModified: r.headers.get('Last-Modified'),
+    lastFetch: Date.now(),
+    error: null,
+  };
+}
+
+async function pollAll() {
+  await Promise.all(AGENTS.map(pollOne));
+  document.getElementById('lastPoll').textContent = new Date().toLocaleTimeString();
+  render();
+}
+
+function startPolling() {
+  if (state.timer) clearInterval(state.timer);
+  if (state.live && state.pollMs > 0) {
+    state.timer = setInterval(pollAll, state.pollMs);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Rendering
+// ──────────────────────────────────────────────────────────────────────
+function render() {
+  renderCards();
+  renderFeed();
+}
+
+function renderCards() {
+  const el = document.getElementById('cards');
+  let html = '';
+  for (const agent of AGENTS) {
+    const st = state.agents[agent.url];
+    if (!st) {
+      html += `<div class="card muted">
+        <div class="c-head"><span class="c-name">${escapeHtml(agent.short)}</span></div>
+        <div class="c-detail">Loading…</div>
+      </div>`;
+      continue;
+    }
+    if (st.error) {
+      const isPending = st.error === 'no chain yet';
+      html += `<div class="card muted" onclick="window.open('dashboard.html?url=${encodeURIComponent(agent.url)}','_blank')">
+        <div class="c-head">
+          <span class="c-name" style="border-bottom:2px solid ${agent.color};">${escapeHtml(agent.short)}</span>
+          <span class="c-verdict">${isPending ? "⏳" : "⚠️"}</span>
+        </div>
+        <div class="c-score" style="color:var(--muted);font-size:14px;">${isPending ? "waiting" : "error"}</div>
+        <div class="c-detail">${escapeHtml(st.error)}</div>
+        <div class="c-meta"><span>${agent.url}</span></div>
+      </div>`;
+      continue;
+    }
+    const s = st.score;
+    const icons = { VERIFIED: "✅", MIXED: "⚠️", WEAK: "❌", WAITING: "⏳", BROKEN: "🚨" };
+    const trans = AGENT_TRANSLATIONS[s.agent];
+    html += `<div class="card ${s.verdictColor}" onclick="window.open('dashboard.html?url=${encodeURIComponent(agent.url)}','_blank')">
+      <div class="c-head">
+        <span class="c-name" style="border-bottom:2px solid ${agent.color};padding-bottom:1px;">${escapeHtml(agent.short)}</span>
+        <span class="c-verdict">${icons[s.verdict] || "•"}</span>
+      </div>
+      <div class="c-score">${s.score}<span style="font-size:13px;color:var(--muted);font-weight:400;"> / 100</span></div>
+      <div class="c-detail">${escapeHtml(trans ? trans.who : s.agent)}</div>
+      <div class="c-meta">
+        <span>${st.events.length} events</span>
+        <span class="age" data-ts="${s.latestTs}">${fmtAge(s.latestTs)}</span>
+      </div>
+    </div>`;
+  }
+  el.innerHTML = html;
+  document.getElementById('agentCount').textContent = AGENTS.length;
+}
+
+function renderFeed() {
+  const all = [];
+  for (const agent of AGENTS) {
+    const st = state.agents[agent.url];
+    if (!st || !st.events) continue;
+    for (const ev of st.events) {
+      all.push({ ev, agent });
+    }
+  }
+  if (all.length === 0) {
+    document.getElementById('feed').innerHTML = `<div class="empty">No chain data yet. ${state.live ? "Polling…" : "Press Live to start."}</div>`;
+    return;
+  }
+  all.sort((a, b) => b.ev.ts - a.ev.ts);
+  let shown = all;
+  if (state.filter === 'substantive') shown = all.filter(x => x.ev.kind !== 'heartbeat');
+  shown = shown.slice(0, 80);
+
+  let html = '';
+  for (const { ev, agent } of shown) {
+    const tpl = KIND_TEMPLATES[ev.kind];
+    let icon = "•", what = ev.kind, extra = "", klass = "";
+    if (tpl) {
+      icon = tpl.icon;
+      klass = tpl.klass;
+      const r = tpl.render(ev.data || {});
+      what = r.what; extra = r.extra || "";
+    }
+    // Detect "new since last render" for flash
+    const seqKey = agent.url + ":" + ev.seq;
+    const seenSet = state.knownSeqs[agent.url] = state.knownSeqs[agent.url] || new Set();
+    const isNew = !seenSet.has(ev.seq) && Object.keys(state.knownSeqs).length > 0 && seenSet.size > 0;
+    seenSet.add(ev.seq);
+    const flashClass = isNew ? ' flash' : '';
+
+    html += `<div class="row ${klass}${flashClass}">
+      <div class="r-icon">${icon}</div>
+      <div class="r-tag" style="background:${agent.color};">${escapeHtml(agent.short)}</div>
+      <div class="r-body">
+        <div class="what">${escapeHtml(what)}</div>
+        ${extra ? `<div class="extra">${escapeHtml(extra)}</div>` : ""}
+      </div>
+      <div class="r-time" title="${new Date(ev.ts).toISOString()}">${fmtClock(ev.ts)}</div>
+    </div>`;
+  }
+  document.getElementById('feed').innerHTML = html;
+}
+
+// Update age displays every 5s independently of polling
+setInterval(() => {
+  document.querySelectorAll('.age[data-ts]').forEach(el => {
+    el.textContent = fmtAge(parseInt(el.dataset.ts));
+  });
+}, 5000);
+
+// ──────────────────────────────────────────────────────────────────────
+// Controls
+// ──────────────────────────────────────────────────────────────────────
+document.getElementById('liveBtn').addEventListener('click', () => {
+  state.live = !state.live;
+  const btn = document.getElementById('liveBtn');
+  const label = document.getElementById('liveLabel');
+  if (state.live) {
+    btn.classList.remove('paused');
+    label.textContent = 'Live';
+    startPolling();
+    pollAll();
+  } else {
+    btn.classList.add('paused');
+    label.textContent = 'Paused';
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  }
+});
+
+document.getElementById('intervalSel').addEventListener('change', (e) => {
+  state.pollMs = parseInt(e.target.value);
+  document.getElementById('intervalDisplay').textContent = state.pollMs === 0 ? 'manual' : (state.pollMs/1000) + 's';
+  startPolling();
+});
+
+document.getElementById('filters').addEventListener('click', (e) => {
+  if (!e.target.classList.contains('filter')) return;
+  document.querySelectorAll('.filter').forEach(f => f.classList.remove('active'));
+  e.target.classList.add('active');
+  state.filter = e.target.dataset.filter;
+  renderFeed();
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Boot
+// ──────────────────────────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  pollAll().then(startPolling);
+});
+</script>
+</body>
+</html>
