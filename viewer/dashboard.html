@@ -172,7 +172,8 @@ const AGENT_TRANSLATIONS = {
   "iBitLabs/sniper-v5.1-live":      { who: "iBitLabs · SOL perp · live ($1k → $10k experiment)", note: "Real account. iBitLabs's flagship public experiment." },
   "iBitLabs/sniper-v5.1-eth_paper": { who: "iBitLabs · ETH perp · paper experiment", note: "ETH signal research, paper account." },
   "iBitLabs/sniper-v5.1":           { who: "iBitLabs · SOL perp · live (legacy agent id, pre Phase A.1)", note: "" },
-  "iBitLabs/rule-engine-v0.1":      { who: "iBitLabs · Rule engine", note: "Watches the other agents' receipt chains and fires actions (ntfy / shell / iMessage) when events match declarative rules. Emits its own chain so the alert layer is itself auditable." },
+  "iBitLabs/rule-engine-v0.1":      { who: "iBitLabs · Rule engine (v0.1)", note: "Earlier version of the rule engine. v0.2 has stateful absence matching + auto-heal." },
+  "iBitLabs/rule-engine-v0.2":      { who: "iBitLabs · Rule engine", note: "Watches other agents' receipt chains and fires actions (ntfy / shell / iMessage) on rule matches. v0.2 supports stateful absence patterns (auto-anchor / auto-reconcile when chain goes stale) and a safety gate (`auto: True`) for shell actions. Emits its own chain so the auto-heal layer is itself auditable." },
   "example/code-writing-agent-v0.1":{ who: "Demo · code-writing AI", note: "Sample chain showing how Receipt records what a coding agent edited, whether the edit matched its stated intent, and whether it silently touched anything else." },
 };
 
