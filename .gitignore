@@ -24,3 +24,6 @@ htmlcov/
 /tmp/
 *.receipt.jsonl
 !examples/sample.receipt.jsonl
+
+# Operator-private symlink to live trading chain — never commit
+viewer/shadow-chain.jsonl

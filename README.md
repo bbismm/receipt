@@ -6,6 +6,16 @@
 The first deployed use case: AI trading bots and copy-traders who want
 to be believed without asking anyone to take their word for it.
 
+> **Heads-up for non-trading adopters:** spec v0.1's vocabulary is
+> trade-flavored (`trust_tier` enum, `match.symbol/side/size` requirements,
+> `reconciliation.matched/unmatched/errors` counts). The four-phase
+> mechanic — `claim → external_action → verified → reconciliation` —
+> generalizes cleanly to any AI task (writing code, fetching URLs, running
+> research loops), but a code-writing or research adopter has to re-map
+> trade fields. See [`examples/code_writing_agent.md`](examples/code_writing_agent.md)
+> for a worked example and the three concrete spec issues it surfaced —
+> these become the shopping list for spec v0.2.
+
 ```bash
 pip install receipt-trade
 ```

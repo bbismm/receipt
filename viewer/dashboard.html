@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 行为账本 · iBitLabs</title>
+<style>
+  :root {
+    --bg: #faf7f1;
+    --fg: #1f1f23;
+    --muted: #6b6b73;
+    --card: #ffffff;
+    --border: #e7e2d6;
+    --green: #2c8a4a;
+    --green-soft: #e8f3ec;
+    --yellow: #c98a16;
+    --yellow-soft: #f7eed8;
+    --red: #b53939;
+    --red-soft: #f4e0e0;
+    --blue: #2c5aa0;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1714; --fg: #ede8db; --muted: #8a8579;
+      --card: #25211c; --border: #3a342c;
+      --green: #62b97d; --green-soft: rgba(98,185,125,0.13);
+      --yellow: #e0a73a; --yellow-soft: rgba(224,167,58,0.14);
+      --red: #d97070; --red-soft: rgba(217,112,112,0.14);
+      --blue: #7aa4d6;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.65 -apple-system, "PingFang SC", BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 22px 80px; }
+  h1 { margin: 0 0 6px 0; font-size: 26px; font-weight: 600; letter-spacing: -0.3px; }
+  .sub { color: var(--muted); margin-bottom: 32px; font-size: 14px; }
+  .sub a { color: var(--blue); text-decoration: none; }
+  .sub a:hover { text-decoration: underline; }
+
+  /* loading + input controls */
+  .controls { display: flex; gap: 10px; margin-bottom: 24px; align-items: center; flex-wrap: wrap; }
+  .controls input { flex: 1; min-width: 200px; padding: 9px 12px; border-radius: 8px;
+                    border: 1px solid var(--border); background: var(--card); color: var(--fg);
+                    font: 13px var(--mono); }
+  .controls button { padding: 9px 16px; border-radius: 8px; border: 1px solid var(--border);
+                     background: var(--card); color: var(--fg); cursor: pointer; font: inherit; }
+  .controls button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+  /* verdict card */
+  .verdict { padding: 28px 24px; border-radius: 14px; margin-bottom: 18px;
+             border: 1px solid var(--border); background: var(--card); }
+  .verdict.green  { background: var(--green-soft);  border-color: var(--green); }
+  .verdict.yellow { background: var(--yellow-soft); border-color: var(--yellow); }
+  .verdict.red    { background: var(--red-soft);    border-color: var(--red); }
+  .verdict .icon { font-size: 36px; line-height: 1; margin-bottom: 8px; }
+  .verdict .headline { font-size: 22px; font-weight: 600; letter-spacing: -0.2px; margin-bottom: 8px; }
+  .verdict.green  .headline { color: var(--green); }
+  .verdict.yellow .headline { color: var(--yellow); }
+  .verdict.red    .headline { color: var(--red); }
+  .verdict .why { color: var(--fg); opacity: 0.85; font-size: 14px; line-height: 1.6; }
+  .verdict .score { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .verdict .score b { color: var(--fg); font-size: 18px; font-weight: 700; }
+
+  /* agent identity */
+  .agent { padding: 16px 20px; border-radius: 10px; margin-bottom: 18px;
+           background: var(--card); border: 1px solid var(--border); }
+  .agent .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .agent .name { font-size: 16px; font-weight: 600; }
+  .agent .raw { margin-top: 6px; font: 12px var(--mono); color: var(--muted); }
+
+  /* stat row */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+           gap: 10px; margin-bottom: 22px; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+          padding: 14px 16px; }
+  .stat .v { font-size: 26px; font-weight: 700; line-height: 1; }
+  .stat .k { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+  /* timeline */
+  .section { margin-bottom: 26px; }
+  .section h2 { font-size: 13px; color: var(--muted); text-transform: uppercase;
+                letter-spacing: 0.6px; margin: 0 0 10px 0; font-weight: 600; }
+  .events { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+            overflow: hidden; }
+  .event { display: grid; grid-template-columns: 38px 1fr auto;
+           gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .event:last-child { border-bottom: 0; }
+  .event .e-icon { font-size: 18px; line-height: 1.4; }
+  .event .e-body { font-size: 14px; }
+  .event .e-body .what { color: var(--fg); }
+  .event .e-body .extra { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .event .e-time { color: var(--muted); font: 12px var(--mono); white-space: nowrap; padding-top: 2px; }
+  .event.ok    { background: var(--green-soft); }
+  .event.warn  { background: var(--yellow-soft); }
+  .event.fail  { background: var(--red-soft); }
+  .event-more { padding: 12px 16px; text-align: center; color: var(--muted); font-size: 12px;
+                background: var(--card); border-top: 1px solid var(--border); cursor: pointer; }
+  .event-more:hover { color: var(--fg); }
+
+  /* dimensions explained */
+  .dims { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+          gap: 10px; }
+  .dim { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+         padding: 14px 16px; }
+  .dim .dim-head { display: flex; justify-content: space-between; align-items: baseline;
+                   margin-bottom: 4px; }
+  .dim .dim-name { font-weight: 600; font-size: 14px; }
+  .dim .dim-score { font: 18px var(--mono); font-weight: 700; }
+  .dim.high .dim-score { color: var(--green); }
+  .dim.mid  .dim-score { color: var(--yellow); }
+  .dim.low  .dim-score { color: var(--red); }
+  .dim .dim-q { color: var(--muted); font-size: 12px; margin: 2px 0 6px 0; }
+  .dim .dim-now { font-size: 13px; line-height: 1.5; }
+  .dim .dim-fix { color: var(--muted); font-size: 12px; margin-top: 6px; line-height: 1.5; }
+
+  /* warnings & flags */
+  .alerts { padding: 14px 18px; border-radius: 10px; background: var(--yellow-soft);
+            border: 1px solid var(--yellow); margin-bottom: 18px; }
+  .alerts .a-head { font-weight: 600; color: var(--yellow); font-size: 13px; margin-bottom: 6px; }
+  .alerts ul { margin: 0; padding-left: 20px; }
+  .alerts li { font-size: 13px; line-height: 1.6; }
+
+  /* advanced details */
+  details { margin-top: 14px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; }
+  details summary:hover { color: var(--fg); }
+  details pre { background: var(--bg); border: 1px solid var(--border); padding: 12px;
+                border-radius: 8px; overflow-x: auto; font: 11px var(--mono);
+                max-height: 300px; }
+  details .meta-tbl { font-size: 12px; }
+  details .meta-tbl td { padding: 4px 12px 4px 0; }
+  details .meta-tbl td:first-child { color: var(--muted); }
+  details .meta-tbl td:nth-child(2) { font-family: var(--mono); }
+
+  /* footer */
+  .foot { color: var(--muted); font-size: 12px; margin-top: 36px; text-align: center;
+          line-height: 1.7; }
+  .foot a { color: var(--muted); }
+
+  .crypto-badge { display: inline-block; font-size: 11px; padding: 3px 8px;
+                  border: 1px solid var(--green); color: var(--green); border-radius: 99px;
+                  background: var(--green-soft); margin-left: 8px; vertical-align: middle; }
+
+  .loading { padding: 40px; text-align: center; color: var(--muted); }
+  .err { padding: 18px; border-radius: 10px; background: var(--red-soft); border: 1px solid var(--red);
+         color: var(--red); }
+</style>
+</head>
+<body>
+<main>
+  <h1>AI 行为账本</h1>
+  <div class="sub">
+    每一条记录都是 AI agent 自己写下的工作日志,密码学链接起来。
+    任何人都可以独立验证 —— 包括正在看这页的你。
+    <span class="crypto-badge">浏览器内完成验证</span>
+  </div>
+
+  <div class="controls">
+    <input id="path" placeholder="留空 = 加载当前默认链 / 或贴一份 .jsonl 文件的 URL" value="">
+    <input type="file" id="file" accept=".jsonl,.json" style="flex:0 0 auto;">
+    <button class="primary" onclick="loadAndRender()">读一下</button>
+  </div>
+
+  <div id="out" class="loading">正在加载默认链 (shadow-chain.jsonl)…</div>
+</main>
+
+<div class="foot">
+  Receipt v0.1 规范 · <a href="https://github.com/bbismm/receipt" target="_blank">github.com/bbismm/receipt</a><br>
+  这是面向操作者的简化面板。审计员 / 开发者请用 <a href="./index.html">完整验证页</a>(显示原始字段、hash 重算、suspicion flags)。<br>
+  这个页面没有任何远程 API 调用 —— 右键查看源码可以读完整逻辑。
+</div>
+
+<script>
+// ── 加载默认 chain ──
+const DEFAULT_CHAIN_PATH = "shadow-chain.jsonl";
+
+// ── 已知 agent 翻译表 ──
+const AGENT_TRANSLATIONS = {
+  "iBitLabs/sniper-v5.1-shadow":   { who: "iBitLabs · SOL 永续 · 影子实验(纸面账户)", note: "和真实账户跑同一份策略,但不动真钱。用来对比" },
+  "iBitLabs/sniper-v5.1-live":     { who: "iBitLabs · SOL 永续 · 实盘($1k → $10k 实验)", note: "真实账户。这是 iBitLabs 的旗舰公开实验" },
+  "iBitLabs/sniper-v5.1-eth_paper":{ who: "iBitLabs · ETH 永续 · 纸面实验", note: "ETH 信号研究中,纸面账户" },
+  "iBitLabs/sniper-v5.1":          { who: "iBitLabs · SOL 永续 · 实盘", note: "" }, // 老的 agent name,Phase A.1 之前
+  "example/code-writing-agent-v0.1":{ who: "Demo · 写代码的 AI", note: "示例 chain。展示 receipt 协议如何记录'AI 改了哪个文件、对没对、有没有偷偷动别处'" },
+};
+
+// ── 事件 kind 翻译 ──
+const KIND_TEMPLATES = {
+  heartbeat: {
+    icon: "💗",
+    klass: "",
+    render: (d) => ({
+      what: `心跳 — ${d.status === "scanning" ? "扫单中" : (d.status || "在线")}`,
+      extra: d.latency_ms != null ? `延迟 ${d.latency_ms} ms` : ""
+    })
+  },
+  claim: {
+    icon: "🎯",
+    klass: "",
+    render: (d) => ({
+      what: `打算 ${actionZh(d.action)} ${d.symbol || ""} ${d.size != null ? d.size + " 张" : ""}` +
+            (d.price_intended != null ? ` @ $${d.price_intended}` : ""),
+      extra: d.reason || ""
+    })
+  },
+  external_action: {
+    icon: "📤",
+    klass: "",
+    render: (d) => ({
+      what: `把请求发给 ${d.venue || "外部"}${d.request && d.request.method ? " · " + d.request.method : ""}${d.request && d.request.endpoint ? " " + d.request.endpoint : ""}`,
+      extra: d.response && d.response.status ? `返回 ${d.response.status}` : ""
+    })
+  },
+  verified: {
+    icon: "✅",
+    klass: "ok",
+    render: (d) => {
+      const m = d.match || {};
+      const idOK = m.id_match !== false;
+      const sizeOK = m.size !== false;
+      const priceOK = m.price_match !== false;
+      const allOK = idOK && sizeOK && priceOK;
+      return {
+        what: allOK
+          ? `${d.source || "外部"}确认成交${d.fill_price != null ? `,成交价 $${d.fill_price}` : ""}${d.filled_size != null ? `,${d.filled_size} 张` : ""}`
+          : `${d.source || "外部"}回执来了,但对账不齐:${[!idOK && "ID 不匹配", !sizeOK && "张数对不上", !priceOK && "成交价超出容差"].filter(Boolean).join(" / ")}`,
+        extra: allOK ? "本地账本和外部回执一致" : "需要人工审查"
+      };
+    }
+  },
+  error: {
+    icon: "❌",
+    klass: "fail",
+    render: (d) => ({
+      what: `失败:${d.reason || d.error || "未注明原因"}`,
+      extra: d.claim_seq != null ? `针对意图 #${d.claim_seq}` : ""
+    })
+  },
+  reconciliation: {
+    icon: "🔍",
+    klass: "ok",
+    render: (d) => {
+      const match = d.match === true || d.match === "true";
+      const local = d.local || {};
+      const ext = d.external || {};
+      const balanceLine = local.balance_usd != null && ext.balance_usd != null
+        ? `本地 $${local.balance_usd} / 外部 $${ext.balance_usd}`
+        : "余额已对比";
+      return {
+        what: `对账 ${match ? "通过" : "不一致"} — ${balanceLine}`,
+        extra: match ? "本地账本和交易所一致" : "本地与外部出现分歧,需要复核"
+      };
+    }
+  },
+  anchor: {
+    icon: "⚓",
+    klass: "ok",
+    render: (d) => ({
+      what: `把这一段链锚定到 ${anchorZh(d.anchor_kind)}${d.anchor_uri ? ` (${shortUri(d.anchor_uri)})` : ""}`,
+      extra: "锚定之后再改这一段链外部能立刻发现"
+    })
+  },
+  signal_rejected: {
+    icon: "🚫",
+    klass: "warn",
+    render: (d) => ({
+      what: `信号被拒:${d.reason || "(未注明原因)"}`,
+      extra: d.signal ? `候选信号 ${d.signal}` : ""
+    })
+  }
+};
+
+function actionZh(a) {
+  return ({"open_long":"做多","open_short":"做空","close":"平仓","close_long":"平多","close_short":"平空","tp":"止盈","sl":"止损"})[a] || a || "?";
+}
+function anchorZh(k) {
+  return ({"ipfs":"IPFS(去中心化存储)","btc_op_return":"比特币区块","ethereum":"以太坊","arweave":"Arweave 永久存储","twitter":"Twitter","moltbook":"Moltbook","github_commit":"GitHub commit"})[k] || k || "(未指明)";
+}
+function shortUri(u) { return u && u.length > 36 ? u.slice(0, 28) + "…" : u; }
+
+// ── 时间格式化 ──
+function fmtTime(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const today = new Date();
+  const isToday = d.toDateString() === today.toDateString();
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const hm = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  if (isToday) return `今天 ${hm}`;
+  if (isYesterday) return `昨天 ${hm}`;
+  return `${d.getMonth()+1}/${d.getDate()} ${hm}`;
+}
+function fmtAge(ms) {
+  if (!ms) return "—";
+  const ageMin = (Date.now() - ms) / 60000;
+  if (ageMin < 2) return "刚刚";
+  if (ageMin < 60) return `${Math.floor(ageMin)} 分钟前`;
+  if (ageMin < 60*24) return `${Math.floor(ageMin/60)} 小时前`;
+  return `${Math.floor(ageMin/60/24)} 天前`;
+}
+
+// ── 加载 + 渲染 ──
+async function loadAndRender() {
+  const path = document.getElementById("path").value.trim();
+  const file = document.getElementById("file").files[0];
+  const out = document.getElementById("out");
+  let text;
+  try {
+    if (file) text = await file.text();
+    else {
+      const url = path || DEFAULT_CHAIN_PATH;
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      text = await r.text();
+    }
+  } catch (e) {
+    out.innerHTML = `<div class="err">没读到链文件:${e.message}<br><br>
+      默认会去本地服务器加载 <code>${DEFAULT_CHAIN_PATH}</code>。要看其它链,贴一个 URL 或者从下面 file picker 选一个 .jsonl 文件。</div>`;
+    return;
+  }
+  let events;
+  try { events = text.split("\n").filter(l=>l.trim()).map(l=>JSON.parse(l)); }
+  catch (e) { out.innerHTML = `<div class="err">这不像一份合法的 jsonl 文件:${e.message}</div>`; return; }
+  if (events.length === 0) { out.innerHTML = `<div class="err">链是空的,什么 event 都没有。</div>`; return; }
+
+  const t0 = performance.now();
+  const verifyReport = await verifyChain(events);
+  const score = computeScore(events, verifyReport);
+  const ms = Math.round(performance.now() - t0);
+  render(events, verifyReport, score, ms);
+}
+
+// ── verify_chain (recompute SHA-256 in-browser) ──
+const HASH_PREFIX = "sha256:";
+const GENESIS_PREV = HASH_PREFIX + "0".repeat(64);
+const CANONICAL_KEYS = ["v","schema_version","ts","seq","agent","kind","data","prev_hash"];
+
+async function sha256hex(text) {
+  const buf = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2,"0")).join("");
+}
+function jsonCanonical(v) {
+  if (v === null) return "null";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "number") return JSON.stringify(v);
+  if (typeof v === "string") return JSON.stringify(v);
+  if (Array.isArray(v)) return "[" + v.map(jsonCanonical).join(",") + "]";
+  return "{" + Object.keys(v).sort().map(k => JSON.stringify(k)+":"+jsonCanonical(v[k])).join(",") + "}";
+}
+function canonical(ev) {
+  const body = {};
+  for (const k of CANONICAL_KEYS) if (k in ev) body[k] = ev[k];
+  return jsonCanonical(body);
+}
+async function verifyChain(events) {
+  let prev = GENESIS_PREV, expected = 0;
+  for (const ev of events) {
+    if (ev.seq !== expected) return { status: "BROKEN", issue: `序号不连续:期望 ${expected},实际 ${ev.seq}` };
+    if (ev.prev_hash !== prev) return { status: "BROKEN", issue: `第 ${expected} 条 prev_hash 对不上前一条 hash` };
+    const recomputed = HASH_PREFIX + await sha256hex(canonical(ev));
+    if (ev.hash !== recomputed) return { status: "BROKEN", issue: `第 ${expected} 条 hash 重算不一致 — 这一条被改过` };
+    prev = ev.hash; expected++;
+  }
+  return { status: "OK" };
+}
+
+// ── score (simplified 5-dim,人话 labels) ──
+const REALTIME_TIERS = new Set(["exchange_realtime","exchange_delayed","api_verified"]);
+const HEARTBEAT_BUCKET_MS = 5*60*1000;
+const DEFAULT_WINDOW_MS = 7*24*3600*1000;
+const PERM_ANCHORS = new Set(["btc_op_return","ethereum","arweave"]);
+
+function computeScore(events, report) {
+  if (events.length === 0) return null;
+  if (report.status === "BROKEN") {
+    return { verdict: "BROKEN", verdictColor: "red", issue: report.issue };
+  }
+
+  const claims = new Set(events.filter(e=>e.kind==="claim").map(e=>e.seq));
+  const terminated = new Set();
+  for (const e of events) {
+    const cs = (e.data||{}).claim_seq;
+    if ((e.kind==="verified"||e.kind==="error") && cs!=null) terminated.add(cs);
+  }
+  const covered = [...claims].filter(c=>terminated.has(c)).length;
+  const coverage = claims.size === 0 ? null : covered / claims.size;
+
+  const verifs = events.filter(e=>e.kind==="verified");
+  const verified_ok = verifs.filter(e => ((e.data.match||{}).id_match !== false)).length;
+  const mismatches = verifs.length - verified_ok;
+  const accuracy = verifs.length ? verified_ok / verifs.length : null;
+
+  const last = events[events.length-1].ts;
+  const windowStart = last - DEFAULT_WINDOW_MS;
+  const span = Math.max(last - windowStart, HEARTBEAT_BUCKET_MS);
+  const totalBuckets = Math.max(1, Math.floor(span/HEARTBEAT_BUCKET_MS));
+  const buckets = new Set();
+  for (const e of events) {
+    const b = Math.floor((e.ts - windowStart) / HEARTBEAT_BUCKET_MS);
+    if (b >= 0 && b < totalBuckets) buckets.add(b);
+  }
+  const consistency = buckets.size / totalBuckets;
+
+  const hasError = events.some(e=>e.kind==="error");
+  const hasRecon = events.some(e=>e.kind==="reconciliation");
+  const verifsAllTol = verifs.length === 0 || verifs.every(e => ((e.data.match||{}).tolerance_used) != null);
+  let transparency_pts = 0;
+  if (hasError) transparency_pts += 33; else transparency_pts += 0;
+  if (hasRecon) transparency_pts += 34; else transparency_pts += 0;
+  if (verifsAllTol) transparency_pts += 33;
+
+  const anchors = events.filter(e=>e.kind==="anchor");
+  let integrity_pts = 0;
+  if (anchors.length === 0) integrity_pts = 50; // chain valid 但无锚
+  else {
+    const a = anchors[anchors.length-1];
+    const ageH = (last - a.ts)/3600000;
+    if (PERM_ANCHORS.has(a.data.anchor_kind)) integrity_pts = 100;
+    else if (a.data.anchor_kind === "ipfs") integrity_pts = 95;
+    else integrity_pts = 80;
+    if (ageH > 24)  integrity_pts -= 30;
+    if (ageH > 168) integrity_pts = Math.min(integrity_pts, 30);
+    integrity_pts = Math.max(0, Math.min(100, integrity_pts));
+  }
+
+  const cov_pts = coverage === null ? 0 : Math.round(coverage * 100);
+  const acc_pts = accuracy === null ? 0 : Math.round(accuracy * 100);
+  const cons_pts = Math.round(Math.min(1, consistency) * 100);
+  const raw = Math.round((cov_pts + acc_pts + cons_pts + transparency_pts + integrity_pts) / 5);
+
+  // tier majority
+  const tierCounts = {};
+  for (const e of events) {
+    const t = (e.data || {}).trust_tier;
+    if (t) tierCounts[t] = (tierCounts[t]||0)+1;
+  }
+  const tierMaj = Object.entries(tierCounts).sort((a,b)=>b[1]-a[1])[0]?.[0] || "manual";
+
+  let verdict, verdictColor, headline, why;
+  const hasClaim = claims.size > 0;
+
+  if (!hasClaim) {
+    verdict = "WAITING";
+    verdictColor = "yellow";
+    headline = "链上只有心跳,还没看到交易行为";
+    why = "现在能确认的是:这个 AI 在按时报到。但它还没下过任何单 —— 一旦它开始下单,这里会出现完整的「打算→发请求→对账」三段式记录。当前的可信度评分天然就低,因为还没有可以验证的事情发生。";
+  } else if (coverage >= 0.9 && (accuracy === null || accuracy >= 0.8) && (mismatches/verifs.length) <= 0.05
+             && anchors.length && hasRecon && REALTIME_TIERS.has(tierMaj)) {
+    verdict = "VERIFIED";
+    verdictColor = "green";
+    headline = "这条链看起来一切正常";
+    why = "每笔交易意图都有对账,对账结果和外部交易所一致,链锚定到了不可篡改的外部存储,而且有定期对账事件。这是一份可以拿来当证据的工作日志。";
+  } else if (coverage < 0.5 || (accuracy !== null && accuracy < 0.8) || !anchors.length || cons_pts < 30) {
+    verdict = "WEAK";
+    verdictColor = "red";
+    headline = "这条链证据不足";
+    why = "缺少一些关键的可信度证据 —— 看下方「为什么是这个分」明细。注意:链本身没有被篡改(hash 都对得上),但「没人在外部确认过它说的事」。";
+  } else {
+    verdict = "MIXED";
+    verdictColor = "yellow";
+    headline = "大部分对得上,但还有空间";
+    why = "链结构 OK、有交易记录,但还差一些证据 —— 比如外部锚定、定期对账、或者实时回执覆盖率。看下方明细。";
+  }
+
+  // 简单 issue 列表
+  const issues = [];
+  if (anchors.length === 0) issues.push("链还没锚定到外部(IPFS / 比特币 OP_RETURN 等)。锚定之后,任何人改了这一段链外部都能立刻发现。");
+  else {
+    const ageH = (last - anchors[anchors.length-1].ts)/3600000;
+    if (ageH > 24) issues.push(`上次外部锚定是 ${ageH.toFixed(0)} 小时前,超过 24h 算「过期」。`);
+  }
+  if (!hasRecon && hasClaim) issues.push("还没出现过和交易所对账的事件。对账事件是「我说我有的钱 = 交易所说我有的钱」的明文证据。");
+  if (!hasError && claims.size >= 20) issues.push("跑了这么多笔从来没失败过,这本身有点不正常 —— 真实系统都会偶尔失败。如果失败被吞掉了,你看不到的就不是 receipt。");
+  if (tierMaj === "backfill_local") issues.push("目前的所有证据都是「事后回填」的,不是实时写入。回填可以伪造,实时记录的伪造门槛高得多。");
+  if (tierMaj === "manual") issues.push("证据都是人工标注的,没有机器回执。可信度上限有限。");
+
+  return {
+    verdict, verdictColor, headline, why,
+    score: raw, score_clamped: raw,
+    dims: {
+      coverage: cov_pts, accuracy: acc_pts, consistency: cons_pts,
+      transparency: transparency_pts, integrity: integrity_pts
+    },
+    summary: { events: events.length, claims: claims.size, verified: verified_ok, errors: events.filter(e=>e.kind==="error").length, recons: events.filter(e=>e.kind==="reconciliation").length },
+    issues,
+    tierMaj,
+    headTs: events[0].ts,
+    tailTs: events[events.length-1].ts,
+    agent: events[0].agent
+  };
+}
+
+// ── 渲染 ──
+function dimClass(v) { return v >= 80 ? "high" : v >= 50 ? "mid" : "low"; }
+
+const DIM_META = {
+  coverage: {
+    name: "意图 → 结果对应",
+    q: "AI 打算做的事,有没有都跟一个结果(成交 / 失败)?",
+    fix: "等链上出现交易意图(claim 事件)之后再看 —— 现在如果是 0,说明 AI 还没尝试下单。"
+  },
+  accuracy: {
+    name: "对账正确度",
+    q: "成交价、张数、订单 ID,和交易所回执对得上吗?",
+    fix: "本地记录 vs 外部回执的字段对比。差异越大,说明 AI 在自我汇报时和实际发生的有距离。"
+  },
+  consistency: {
+    name: "持续在线度",
+    q: "有没有诡异的沉默期?(比如 7 天里有 5 天没任何记录)",
+    fix: "心跳(heartbeat)间隔过长会扣分。理想状态:每 5 分钟一条心跳,7 天总共有 ~2016 个 5 分钟桶应该都有覆盖。"
+  },
+  transparency: {
+    name: "坦白度",
+    q: "有报告过失败吗?有定期对过账吗?容差有写明吗?",
+    fix: "缺少 error 事件 / reconciliation 事件 / match.tolerance_used 都扣分。真实系统不会一直完美。"
+  },
+  integrity: {
+    name: "防篡改度",
+    q: "这一段链有没有锚定到外部不可篡改的地方?",
+    fix: "把链的 Merkle root 写到 IPFS / 比特币 OP_RETURN / Arweave,任何人都能独立验证「这一段链确实是当时那一段,没有被偷换」。"
+  }
+};
+
+function render(events, report, score, elapsedMs) {
+  const out = document.getElementById("out");
+  if (report.status === "BROKEN") {
+    out.innerHTML = `
+      <div class="verdict red">
+        <div class="icon">⚠️</div>
+        <div class="headline">这条链有结构问题</div>
+        <div class="why">${report.issue}<br><br>这意味着链上的某一条 event 在被记录之后又被改过 —— 要么是 bug,要么是有人动了文件。无论哪种,这份 receipt 不能作为证据。</div>
+      </div>
+      <div class="foot" style="text-align:left;margin-top:24px;">
+        想看哪一条出问题,打开浏览器开发者工具 (Cmd+Option+I) 看 console.log,或者用 <a href="./index.html">完整验证页</a>。
+      </div>
+    `;
+    return;
+  }
+  if (!score) {
+    out.innerHTML = `<div class="err">链是空的。</div>`;
+    return;
+  }
+
+  const agentInfo = AGENT_TRANSLATIONS[score.agent] || { who: "未知 agent", note: "" };
+
+  let html = "";
+
+  // ── 顶部 verdict 块 ──
+  const icons = { VERIFIED: "✅", MIXED: "⚠️", WEAK: "❌", WAITING: "⏳", BROKEN: "🚨" };
+  html += `<div class="verdict ${score.verdictColor}">
+    <div class="icon">${icons[score.verdict] || "•"}</div>
+    <div class="headline">${score.headline}</div>
+    <div class="why">${score.why}</div>
+    <div class="score">可信度分:<b>${score.score}</b> / 100${score.score < 40 ? ' · 但请先读上面这段解释' : ''}</div>
+  </div>`;
+
+  // ── agent identity ──
+  html += `<div class="agent">
+    <div class="label">这是哪个 AI 的账本</div>
+    <div class="name">${agentInfo.who}</div>
+    ${agentInfo.note ? `<div style="margin-top:4px;font-size:13px;color:var(--muted);">${agentInfo.note}</div>` : ""}
+    <div class="raw">agent id: ${escapeHtml(score.agent)}</div>
+  </div>`;
+
+  // ── 关键数字 ──
+  html += `<div class="stats">
+    <div class="stat"><div class="v">${score.summary.events}</div><div class="k">总记录数</div></div>
+    <div class="stat"><div class="v">${score.summary.claims}</div><div class="k">交易意图</div></div>
+    <div class="stat"><div class="v">${score.summary.verified}</div><div class="k">已成交确认</div></div>
+    <div class="stat"><div class="v">${score.summary.errors}</div><div class="k">报告过的失败</div></div>
+    <div class="stat"><div class="v">${score.summary.recons}</div><div class="k">外部对账次数</div></div>
+    <div class="stat"><div class="v">${fmtAge(score.tailTs)}</div><div class="k">最近一条</div></div>
+  </div>`;
+
+  // ── issue alerts ──
+  if (score.issues && score.issues.length) {
+    html += `<div class="alerts">
+      <div class="a-head">为什么不是满分</div>
+      <ul>${score.issues.map(i => `<li>${i}</li>`).join("")}</ul>
+    </div>`;
+  }
+
+  // ── 时间线 ──
+  const recent = events.slice(-12).reverse();
+  html += `<div class="section">
+    <h2>最近发生了什么</h2>
+    <div class="events">`;
+  for (const ev of recent) {
+    const tpl = KIND_TEMPLATES[ev.kind];
+    let icon = "•", what = ev.kind, extra = "", klass = "";
+    if (tpl) {
+      icon = tpl.icon;
+      klass = tpl.klass;
+      const r = tpl.render(ev.data || {});
+      what = r.what;
+      extra = r.extra || "";
+    } else {
+      what = `${ev.kind}(未知 event 类型)`;
+    }
+    html += `<div class="event ${klass}">
+      <div class="e-icon">${icon}</div>
+      <div class="e-body">
+        <div class="what">${escapeHtml(what)}</div>
+        ${extra ? `<div class="extra">${escapeHtml(extra)}</div>` : ""}
+      </div>
+      <div class="e-time">${fmtTime(ev.ts)}</div>
+    </div>`;
+  }
+  if (events.length > 12) {
+    html += `<div class="event-more" onclick="this.parentNode.querySelectorAll('.event.hidden').forEach(e=>e.classList.remove('hidden')); this.remove();">还有 ${events.length - 12} 条,点开看 ↓</div>`;
+    // 把更早的 12+ 条 hidden 加进 DOM
+  }
+  html += `</div></div>`;
+
+  // ── 五维分数明细 ──
+  html += `<div class="section">
+    <h2>为什么是这个分</h2>
+    <div class="dims">`;
+  for (const [k, v] of Object.entries(score.dims)) {
+    const meta = DIM_META[k];
+    html += `<div class="dim ${dimClass(v)}">
+      <div class="dim-head">
+        <span class="dim-name">${meta.name}</span>
+        <span class="dim-score">${v}</span>
+      </div>
+      <div class="dim-q">${meta.q}</div>
+      <div class="dim-fix">${meta.fix}</div>
+    </div>`;
+  }
+  html += `</div></div>`;
+
+  // ── 验证证明 ──
+  html += `<div class="section">
+    <h2>这个验证是怎么完成的</h2>
+    <div style="padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:10px;font-size:13px;line-height:1.7;">
+      浏览器内重新计算了链上每一条 event 的 SHA-256 hash,比对每一条的 <code>prev_hash</code> 是不是上一条的 hash。
+      ${events.length} 条全部通过(<b>${elapsedMs} ms</b>)。任何人都可以做这件事 —— 右键查看本页源码,逻辑都在 <code>verifyChain()</code> 函数里。<br>
+      这一步只能证明「这条链没有被改过」。「链上声称的事是不是真的发生过」需要看里面有没有外部锚定 + 对账事件。
+    </div>
+  </div>`;
+
+  // ── 折叠技术细节 ──
+  html += `<details>
+    <summary>↓ 想看技术字段(给开发者 / 审计员)</summary>
+    <table class="meta-tbl">
+      <tr><td>链长度</td><td>${events.length} 条</td></tr>
+      <tr><td>首条时间戳</td><td>${new Date(score.headTs).toISOString()}</td></tr>
+      <tr><td>末条时间戳</td><td>${new Date(score.tailTs).toISOString()}</td></tr>
+      <tr><td>agent id</td><td>${escapeHtml(score.agent)}</td></tr>
+      <tr><td>trust tier (majority)</td><td>${escapeHtml(score.tierMaj)}</td></tr>
+      <tr><td>原始分</td><td>${score.score}</td></tr>
+    </table>
+    <div style="margin-top:14px;color:var(--muted);font-size:12px;">最后 3 条 raw JSON:</div>
+    <pre>${events.slice(-3).map(e => JSON.stringify(e, null, 2)).join("\n\n")}</pre>
+    <div style="margin-top:8px;"><a href="./index.html" style="color:var(--blue);">→ 切到完整验证页(包含 suspicion flags / mismatch examples / unclamped score 等)</a></div>
+  </details>`;
+
+  out.innerHTML = html;
+}
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+}
+
+// 页面加载即自动渲染(default chain)
+window.addEventListener("load", loadAndRender);
+</script>
+</body>
+</html>
