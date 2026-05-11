@@ -1,62 +1,66 @@
 #!/usr/bin/env python3
-"""rule_engine.py — Reactive layer for the Receipt protocol.
+"""rule_engine.py — Reactive + self-healing layer for the Receipt protocol.
 
 Tails one or more receipt JSONL chains and fires actions (ntfy, shell,
-iMessage) when events match declarative rules. Each rule firing optionally
-emits a meta-receipt event back to its own chain, so the alert layer is
+iMessage) when events match declarative rules. Each rule firing emits a
+meta-receipt event to its own chain — the alert / auto-heal layer is
 itself auditable via the same protocol it operates on.
 
-Design (v0.1):
-  - Event-level matching only (kind, data.X field equality / list membership)
-  - Per-rule debounce (in seconds; in-memory, not persisted)
-  - Multi-chain support via `chains: [name, name, ...]` per rule (default ["*"])
-  - Actions: ntfy, shell, imessage
-  - Optional meta-receipt: every rule firing emits claim → external_action →
-    verified events to a separate chain
-  - Stateless across restarts: marks current chain heads as "seen" on boot
-    so a restart never re-fires all prior events
+v0.2 additions over v0.1:
+  - Stateful "absent" pattern: fires when no event of kind X has occurred
+    on a chain in the last Y seconds (poll-driven, not event-driven)
+  - `auto: true/false` flag gating shell-action execution. Default false:
+    shell actions are blocked unless the rule explicitly opts in. ntfy /
+    iMessage actions are not gated (low blast radius). Logs "BLOCKED"
+    when a shell action is skipped due to missing `auto: true`
+  - Engine emits its own heartbeat events to the meta chain every 60s,
+    so external watchers can detect "engine alive but silent" conditions
 
-Not included in v0.1 (potential v0.2):
-  - Stateful patterns (no heartbeat for X min, claim without verified in Y sec)
+What v0.2 still does NOT do (deferred to v0.3):
   - External truth cross-check (compare receipt-state to exchange API)
-  - Persistent debounce state across restarts
+  - Persistent debounce state across engine restarts
+  - Pattern matching on event sequences ("claim without verified in N sec")
+
+Tier discipline (operator policy, not enforced by code):
+  - Tier 1 (idempotent, reversible) → safe to auto: anchor, reconcile, sync
+  - Tier 2 (state-fixing, reversible w/ effort) → auto + circuit breaker
+  - Tier 3 (irreversible, live money) → ntfy only, NEVER set auto: true
+    Examples: bootout sniper, kill positions, modify chains
 
 Usage:
     python3 rule_engine.py --rules /path/to/rules.py \\
                            --meta-receipt /path/to/rule-engine.receipt.jsonl \\
-                           --meta-agent iBitLabs/rule-engine-v0.1 \\
+                           --meta-agent iBitLabs/rule-engine-v0.2 \\
                            --log-file /path/to/engine.log
 
-The rules file is a Python module exposing two top-level values:
+Rules file schema (Python module):
 
-    CHAINS = {
-        "live":   "/path/to/live.receipt.jsonl",
-        "shadow": "/path/to/shadow.receipt.jsonl",
-    }
+    CHAINS = {"live": "/path/to/live.jsonl", "shadow": "/path/to/shadow.jsonl"}
 
     RULES = [
+        # event-driven (v0.1):
         {
             "name": "alert_on_open",
-            "chains": ["live"],            # optional, default ["*"]
-            "match": {                     # all keys must match
-                "kind": "claim",
-                "data.action": ["open_long", "open_short"],
-            },
-            "do": [                        # actions run in order
-                {"type": "ntfy", "topic": "...",
-                 "body": "Opened {data.symbol} @ ${data.price_intended}"},
-            ],
-            "debounce_seconds": 30,        # optional, default 0
+            "chains": ["live"],
+            "match": {"kind": "claim", "data.action": ["open_long","open_short"]},
+            "do": [{"type": "ntfy", "topic": "...", "body": "..."}],
+            "debounce_seconds": 30,
         },
-        ...
+        # stateful absence (v0.2):
+        {
+            "name": "auto_anchor_stale",
+            "chains": ["live"],
+            "match": {"absent": {"kind": "anchor", "for_seconds": 86400}},
+            "auto": True,  # required for shell actions to actually execute
+            "do": [
+                {"type": "shell", "cmd": "python3 /path/to/anchor_daily.py --chain /path/to/live.jsonl"},
+                {"type": "ntfy", "topic": "...", "body": "Auto-anchored stale chain"},
+            ],
+            "debounce_seconds": 3600,
+        },
     ]
 
-Match values can be a scalar (equality), a list (membership), or a bool
-(truthiness comparison). Field paths use dot notation: `data.action`.
-Template placeholders in action strings use `{data.x}` form — same dot
-notation, missing fields render as empty string.
-
-License: MIT (matches receipt repo).
+License: MIT.
 """
 from __future__ import annotations
 
@@ -74,11 +78,9 @@ from pathlib import Path
 from typing import Any
 
 # Receipt SDK for the meta-receipt chain (optional).
-# Look in user site-packages first (the launchd-safe install location).
 try:
     from receipt import Receipt as _Receipt
 except ImportError:
-    # Fallback: try the source tree at ~/Documents/receipt/
     _src = os.path.expanduser("~/Documents/receipt")
     if os.path.isdir(_src):
         sys.path.insert(0, _src)
@@ -88,6 +90,7 @@ except ImportError:
         _Receipt = None  # type: ignore
 
 POLL_INTERVAL_SECONDS = 2
+SELF_HEARTBEAT_SECONDS = 60
 TEMPLATE_RE = re.compile(r"\{([^}]+)\}")
 
 
@@ -109,8 +112,15 @@ def render_template(s: str, event: dict) -> str:
     return TEMPLATE_RE.sub(repl, s)
 
 
-def match_rule(rule: dict, event: dict) -> bool:
-    """All match keys must satisfy. Bool / list / scalar value semantics."""
+def is_stateful(rule: dict) -> bool:
+    """Rule uses stateful absence pattern (matched per-poll, not per-event)."""
+    return isinstance(rule.get("match"), dict) and "absent" in rule["match"]
+
+
+def match_rule_event(rule: dict, event: dict) -> bool:
+    """Event-driven match (v0.1 semantics). Stateful rules return False here."""
+    if is_stateful(rule):
+        return False
     for key, expected in rule.get("match", {}).items():
         actual = deep_get(event, key) if "." in key else event.get(key)
         if isinstance(expected, list):
@@ -123,6 +133,25 @@ def match_rule(rule: dict, event: dict) -> bool:
             if actual != expected:
                 return False
     return True
+
+
+def match_rule_stateful(rule: dict, chain_st: dict, now_ms: int) -> bool:
+    """Stateful match: `absent` clause fires when no event of given kind
+    has happened in the last `for_seconds`. Requires the chain to have
+    at least one event already (so we have a meaningful "for X seconds"
+    reference point). Returns False on empty chains."""
+    if not is_stateful(rule):
+        return False
+    spec = rule["match"]["absent"]
+    kind = spec.get("kind")
+    for_seconds = spec.get("for_seconds", 0)
+    if not kind or for_seconds <= 0:
+        return False
+    if chain_st.get("first_ts") is None:
+        return False  # chain has no events yet
+    last_kind_ts = chain_st.get("last_kind_ts", {}).get(kind)
+    reference_ts = last_kind_ts if last_kind_ts is not None else chain_st["first_ts"]
+    return (now_ms - reference_ts) > (for_seconds * 1000)
 
 
 def execute_action(action: dict, event: dict, chain: str, dry_run: bool, log: logging.Logger) -> dict:
@@ -151,7 +180,7 @@ def execute_action(action: dict, event: dict, chain: str, dry_run: bool, log: lo
             if dry_run:
                 return {"action": "shell", "cmd": cmd_str, "dry_run": True}
             r = subprocess.run(["/bin/zsh", "-c", cmd_str],
-                               capture_output=True, timeout=60)
+                               capture_output=True, timeout=120)
             return {"action": "shell", "cmd": cmd_str,
                     "ok": r.returncode == 0,
                     "stdout_tail": r.stdout.decode()[-160:],
@@ -162,7 +191,6 @@ def execute_action(action: dict, event: dict, chain: str, dry_run: bool, log: lo
             body = render_template(action.get("body", ""), event)
             if dry_run:
                 return {"action": "imessage", "to": to, "body": body, "dry_run": True}
-            # Escape double quotes in body for AppleScript
             body_esc = body.replace('"', '\\"')
             ascr = f'tell application "Messages" to send "{body_esc}" to buddy "{to}"'
             r = subprocess.run(["osascript", "-e", ascr],
@@ -191,29 +219,40 @@ def load_rules_module(path: str) -> tuple[dict, list]:
     return chains, rules
 
 
-def initial_scan(chain_path: str, log: logging.Logger) -> tuple[int, int]:
-    """Return (file_size, last_seq) for a chain — used to mark existing
-    events as 'already seen' so engine restart doesn't fire on backfill."""
+def initial_scan(chain_path: str, log: logging.Logger) -> dict:
+    """Inspect a chain file and return its current state:
+        {size, last_seq, first_ts, last_kind_ts: {kind: ts_ms}}
+    Used at boot to mark existing events as 'already seen' (so engine
+    restart never fires backfilled events) and to seed the kind→last_ts
+    map used by stateful absence matching.
+    """
+    state = {"size": 0, "last_seq": -1, "first_ts": None, "last_kind_ts": {}}
     p = Path(chain_path)
     if not p.exists():
-        return 0, -1
+        return state
     try:
-        size = p.stat().st_size
+        state["size"] = p.stat().st_size
         with open(p, "r") as f:
-            lines = f.readlines()
-        last_seq = -1
-        for line in reversed(lines):
-            line = line.strip()
-            if line:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
                 try:
-                    last_seq = json.loads(line).get("seq", -1)
-                    break
+                    ev = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-        return size, last_seq
+                if state["first_ts"] is None:
+                    state["first_ts"] = ev.get("ts")
+                seq = ev.get("seq")
+                if isinstance(seq, int) and seq > state["last_seq"]:
+                    state["last_seq"] = seq
+                k = ev.get("kind")
+                t = ev.get("ts")
+                if k and t is not None:
+                    state["last_kind_ts"][k] = t
     except Exception as e:
         log.warning(f"initial_scan failed for {chain_path}: {e}")
-        return 0, -1
+    return state
 
 
 def read_new_events(chain_path: str, prev_size: int, log: logging.Logger) -> tuple[int, list[dict]]:
@@ -236,10 +275,30 @@ def read_new_events(chain_path: str, prev_size: int, log: logging.Logger) -> tup
     return new_size, events
 
 
+def fire_rule(rule: dict, event: dict, chain_name: str, dry_run: bool,
+              meta: Any, log: logging.Logger) -> list[dict]:
+    """Execute a rule's actions and return results. Gates shell actions on
+    rule's `auto: true` flag — without it, shell actions are skipped with
+    a 'BLOCKED' log entry."""
+    is_auto = rule.get("auto", False)
+    results: list[dict] = []
+    for action in rule.get("do", []):
+        if action.get("type") == "shell" and not is_auto:
+            log.info(f"  -> BLOCKED shell action (rule lacks auto: true): "
+                     f"{render_template(action.get('cmd', ''), event)[:120]}")
+            results.append({"action": "shell", "blocked": "no_auto_flag",
+                            "cmd": render_template(action.get("cmd", ""), event)})
+            continue
+        res = execute_action(action, event, chain_name, dry_run, log)
+        results.append(res)
+        log.info(f"  -> {json.dumps(res)[:240]}")
+    emit_meta_receipt(meta, rule["name"], chain_name, event, results, log)
+    return results
+
+
 def emit_meta_receipt(meta: Any, rule_name: str, chain_name: str, event: dict,
                       results: list[dict], log: logging.Logger) -> None:
-    """Emit claim/external_action/verified triple for one rule firing.
-    Best-effort — failures are logged but don't propagate."""
+    """Emit claim/external_action/verified triple for one rule firing."""
     if meta is None:
         return
     try:
@@ -264,7 +323,7 @@ def emit_meta_receipt(meta: Any, rule_name: str, chain_name: str, event: dict,
             claim_seq,
             trust_tier="api_verified",
             source="rule_engine_self_attest",
-            summary=f"{len(results)} action(s); {'all_ok' if all_ok else 'some_failed'}",
+            summary=f"{len(results)} action(s); {'all_ok' if all_ok else 'some_failed_or_blocked'}",
             match={
                 "symbol": rule_name,
                 "side": "rule_fire",
@@ -279,12 +338,30 @@ def emit_meta_receipt(meta: Any, rule_name: str, chain_name: str, event: dict,
         log.warning(f"meta-receipt write failed: {e}")
 
 
+def synthetic_stateful_event(rule: dict, chain_name: str, chain_st: dict, now_ms: int) -> dict:
+    """For stateful rules, fabricate a minimal event-shaped dict so the
+    meta-receipt emission has something to reference. seq is the chain's
+    current last_seq (the event we'd be "responding to"), agent is the
+    chain name, kind is a sentinel."""
+    return {
+        "seq": chain_st.get("last_seq", -1),
+        "agent": chain_name,
+        "kind": "stateful_match",
+        "ts": now_ms,
+        "data": {
+            "absent_kind": rule["match"]["absent"]["kind"],
+            "absent_for_seconds": rule["match"]["absent"]["for_seconds"],
+            "chain": chain_name,
+        },
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--rules", required=True, help="Path to rules.py module")
     ap.add_argument("--meta-receipt", default=None,
                     help="Path to meta-receipt JSONL output (optional)")
-    ap.add_argument("--meta-agent", default="iBitLabs/rule-engine-v0.1")
+    ap.add_argument("--meta-agent", default="iBitLabs/rule-engine-v0.2")
     ap.add_argument("--log-file", default=None)
     ap.add_argument("--dry-run", action="store_true",
                     help="Match rules but don't execute actions; useful for testing")
@@ -301,7 +378,7 @@ def main() -> int:
         handlers=handlers,
     )
     log = logging.getLogger("rule_engine")
-    log.info("== rule_engine v0.1 starting ==")
+    log.info("== rule_engine v0.2 starting ==")
     log.info(f"  rules:        {args.rules}")
     log.info(f"  meta-receipt: {args.meta_receipt or 'disabled'}")
     log.info(f"  dry-run:      {args.dry_run}")
@@ -312,25 +389,32 @@ def main() -> int:
         log.error(f"failed to load rules: {e}")
         return 1
     log.info(f"  chains:       {list(CHAINS.keys())}")
-    log.info(f"  rules loaded: {len(RULES)}")
+    stateful_count = sum(1 for r in RULES if is_stateful(r))
+    auto_count = sum(1 for r in RULES if r.get("auto"))
+    log.info(f"  rules loaded: {len(RULES)} ({stateful_count} stateful, {auto_count} auto)")
 
     meta = None
     if args.meta_receipt and _Receipt and not args.dry_run:
         try:
             meta = _Receipt(agent=args.meta_agent, out_path=args.meta_receipt)
             log.info(f"  meta-chain head seq={meta.seq}")
+            # Emit a startup heartbeat so the meta chain is non-empty + monitor.html
+            # has something to render.
+            meta.heartbeat(status="started")
         except Exception as e:
             log.warning(f"  meta-receipt init failed: {e}")
 
     chain_state: dict[str, dict] = {}
     for name, path in CHAINS.items():
-        size, last_seq = initial_scan(path, log)
-        chain_state[name] = {"path": path, "size": size, "last_seq": last_seq}
-        log.info(f"  init {name}: size={size} last_seq={last_seq}")
+        st = initial_scan(path, log)
+        st["path"] = path
+        chain_state[name] = st
+        log.info(f"  init {name}: size={st['size']} last_seq={st['last_seq']} "
+                 f"first_ts={st['first_ts']} kinds={list(st['last_kind_ts'].keys())}")
 
     debounce: dict[str, float] = {}
+    last_self_hb = time.time()
 
-    # SIGTERM / SIGINT cleanly stop the loop
     running = {"flag": True}
     def _stop(signum, frame):
         log.info(f"received signal {signum}, exiting")
@@ -338,9 +422,12 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 
-    log.info("watching for new events...")
+    log.info("watching for new events + stateful absences...")
     while running["flag"]:
         time.sleep(args.poll_seconds)
+        now_ms = int(time.time() * 1000)
+
+        # Phase 1: read new events from each chain, fire event-driven rules
         for chain_name, st in chain_state.items():
             try:
                 if not Path(st["path"]).exists():
@@ -355,28 +442,62 @@ def main() -> int:
                 if seq <= st["last_seq"]:
                     continue
                 st["last_seq"] = seq
+                # Update kind tracking for stateful matching
+                if st.get("first_ts") is None:
+                    st["first_ts"] = ev.get("ts")
+                k, t = ev.get("kind"), ev.get("ts")
+                if k and t is not None:
+                    st["last_kind_ts"][k] = t
+                # Evaluate event-driven rules
                 for rule in RULES:
+                    if is_stateful(rule):
+                        continue
                     rule_chains = rule.get("chains", ["*"])
                     if "*" not in rule_chains and chain_name not in rule_chains:
                         continue
-                    if not match_rule(rule, ev):
+                    if not match_rule_event(rule, ev):
                         continue
                     debounce_sec = rule.get("debounce_seconds", 0)
                     now = time.time()
-                    last_fire = debounce.get(rule["name"], 0)
-                    if debounce_sec > 0 and (now - last_fire) < debounce_sec:
-                        log.info(f"DEBOUNCED rule='{rule['name']}' chain={chain_name} "
-                                 f"seq={seq} kind={ev.get('kind')}")
+                    if debounce_sec > 0 and (now - debounce.get(rule["name"], 0)) < debounce_sec:
+                        log.info(f"DEBOUNCED rule='{rule['name']}' chain={chain_name} seq={seq}")
                         continue
                     debounce[rule["name"]] = now
                     log.info(f"FIRE rule='{rule['name']}' chain={chain_name} "
                              f"seq={seq} kind={ev.get('kind')}")
-                    results = []
-                    for action in rule.get("do", []):
-                        res = execute_action(action, ev, chain_name, args.dry_run, log)
-                        results.append(res)
-                        log.info(f"  -> {json.dumps(res)[:200]}")
-                    emit_meta_receipt(meta, rule["name"], chain_name, ev, results, log)
+                    fire_rule(rule, ev, chain_name, args.dry_run, meta, log)
+
+        # Phase 2: evaluate stateful absence rules per chain
+        for chain_name, st in chain_state.items():
+            for rule in RULES:
+                if not is_stateful(rule):
+                    continue
+                rule_chains = rule.get("chains", ["*"])
+                if "*" not in rule_chains and chain_name not in rule_chains:
+                    continue
+                if not match_rule_stateful(rule, st, now_ms):
+                    continue
+                debounce_sec = rule.get("debounce_seconds", 0)
+                now = time.time()
+                if debounce_sec > 0 and (now - debounce.get(rule["name"], 0)) < debounce_sec:
+                    continue
+                debounce[rule["name"]] = now
+                synth = synthetic_stateful_event(rule, chain_name, st, now_ms)
+                log.info(f"FIRE stateful rule='{rule['name']}' chain={chain_name} "
+                         f"absent_kind={synth['data']['absent_kind']} "
+                         f"absent_for={synth['data']['absent_for_seconds']}s")
+                fire_rule(rule, synth, chain_name, args.dry_run, meta, log)
+
+        # Phase 3: engine self-heartbeat
+        if meta is not None and (time.time() - last_self_hb) >= SELF_HEARTBEAT_SECONDS:
+            try:
+                meta.heartbeat(status="alive",
+                               watched_chains=len(chain_state),
+                               rules=len(RULES))
+                last_self_hb = time.time()
+            except Exception as e:
+                log.warning(f"self-heartbeat write failed: {e}")
+
     log.info("== rule_engine stopped ==")
     return 0
 

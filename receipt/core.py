@@ -2,6 +2,13 @@
 
 Drop-in for any AI agent. Writes hash-chained JSONL to disk. Read-only by
 design — never mutates external state, never edits prior events.
+
+Concurrent-writer-safe via fcntl.flock on each append: multiple processes
+writing to the same chain file serialize on an exclusive lock and re-read
+tail state under the lock, so the seq/prev_hash chain stays consistent
+even with concurrent writers (e.g., a live bot + an out-of-band anchor
+script writing to the same chain). On platforms without fcntl (Windows),
+falls back to single-process semantics (threading.Lock only).
 """
 from __future__ import annotations
 
@@ -13,6 +20,16 @@ from pathlib import Path
 from typing import Any
 
 from receipt.chain import GENESIS_PREV_HASH, compute_hash
+
+# fcntl is POSIX-only; on Windows or restricted environments, file-level
+# locking degrades to single-process semantics. The chain still serializes
+# within one process via threading.Lock.
+try:
+    import fcntl as _fcntl
+    _HAS_FLOCK = True
+except ImportError:
+    _fcntl = None  # type: ignore
+    _HAS_FLOCK = False
 
 SPEC_VERSION = "0.1"
 SCHEMA_VERSION = "1"
@@ -130,29 +147,82 @@ class Receipt:
     # ── internal ──────────────────────────────────────────────────────────
 
     def _append(self, kind: str, data: dict) -> int:
+        """Append one event with cross-process locking. Holds an exclusive
+        fcntl.flock on the chain file for the critical section: re-reads
+        the file's current tail under the lock, builds the new event with
+        fresh seq + prev_hash, writes it, releases the lock. Two processes
+        writing concurrently serialize on this lock; each sees the other's
+        writes."""
         if kind not in ALLOWED_KINDS:
             raise ValueError(f"unknown kind: {kind}")
-        with self._lock:
-            event = {
-                "v": SPEC_VERSION,
-                "schema_version": SCHEMA_VERSION,
-                "ts": _now_ms(),
-                "seq": self._seq,
-                "agent": self.agent,
-                "kind": kind,
-                "data": data,
-                "prev_hash": self._prev_hash,
-            }
-            event["hash"] = compute_hash(event)
-            with self.out_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
-                if self.autoflush:
-                    f.flush()
-                    os.fsync(f.fileno())
-            written_seq = self._seq
-            self._seq += 1
-            self._prev_hash = event["hash"]
-            return written_seq
+        with self._lock:  # intra-process
+            with self.out_path.open("a+", encoding="utf-8") as f:
+                if _HAS_FLOCK:
+                    _fcntl.flock(f.fileno(), _fcntl.LOCK_EX)
+                try:
+                    # Re-read tail under the lock so we don't write stale
+                    # seq / prev_hash if another process appended since
+                    # this Receipt object was constructed.
+                    fresh_seq, fresh_prev = self._read_tail_locked(f)
+                    self._seq = fresh_seq
+                    self._prev_hash = fresh_prev
+
+                    event = {
+                        "v": SPEC_VERSION,
+                        "schema_version": SCHEMA_VERSION,
+                        "ts": _now_ms(),
+                        "seq": self._seq,
+                        "agent": self.agent,
+                        "kind": kind,
+                        "data": data,
+                        "prev_hash": self._prev_hash,
+                    }
+                    event["hash"] = compute_hash(event)
+
+                    f.seek(0, 2)  # end
+                    f.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+                    if self.autoflush:
+                        f.flush()
+                        os.fsync(f.fileno())
+
+                    written_seq = self._seq
+                    self._seq += 1
+                    self._prev_hash = event["hash"]
+                    return written_seq
+                finally:
+                    if _HAS_FLOCK:
+                        _fcntl.flock(f.fileno(), _fcntl.LOCK_UN)
+
+    @staticmethod
+    def _read_tail_locked(open_file) -> tuple[int, str]:
+        """Read the chain tail from an already-open file handle. Assumes
+        flock is held by caller. Returns (next_seq, prev_hash)."""
+        open_file.seek(0, 2)  # end
+        if open_file.tell() == 0:
+            return 0, GENESIS_PREV_HASH
+        # Scan backwards to find the last non-empty line. Reading the
+        # whole file would be O(n) per append; instead we read backwards
+        # in 8 KB chunks until we have a complete last line.
+        chunk_size = 8192
+        pos = open_file.tell()
+        tail = ""
+        while pos > 0:
+            read_size = min(chunk_size, pos)
+            pos -= read_size
+            open_file.seek(pos)
+            tail = open_file.read(read_size) + tail
+            stripped = tail.rstrip("\n")
+            if "\n" in stripped:
+                # Found a complete line — the last one
+                last_line = stripped.rsplit("\n", 1)[-1]
+                ev = json.loads(last_line)
+                return int(ev["seq"]) + 1, ev["hash"]
+        # Whole file was one line (or empty)
+        line = tail.strip()
+        if not line:
+            return 0, GENESIS_PREV_HASH
+        ev = json.loads(line)
+        return int(ev["seq"]) + 1, ev["hash"]
 
     def _tail_state(self) -> tuple[int, str]:
         if not self.out_path.exists() or self.out_path.stat().st_size == 0:
