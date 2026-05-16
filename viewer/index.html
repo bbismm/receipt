@@ -99,6 +99,12 @@
            style="flex:0 0 auto;">
     <button class="primary" onclick="run()">Verify independently →</button>
   </div>
+  <div class="examples" style="color:var(--muted); font-size:12px; margin-top:-12px; margin-bottom:24px;">
+    Try a live chain:
+    <a href="?chain=https://gateway.pinata.cloud/ipfs/QmPjNuUXLadzmjz8K8fe4uTXUkEGp2c7xFW4pQWwpiWKtL" style="color:var(--green);">iBitLabs sniper-v5.1 — 1,187 events, anchored to IPFS</a>
+    ·
+    <a href="?chain=code-writing-demo.jsonl" style="color:var(--green);">code-writing demo — 12 events, local</a>
+  </div>
   <div id="out"></div>
 </main>
 
@@ -353,6 +359,18 @@ function computeScore(events, report) {
     computed_at_ms: Date.now(),
   };
 }
+
+// Auto-load if URL has ?chain=<url> query param. Lets people share a link
+// that one-click-verifies a specific chain, e.g.
+//   bbismm.github.io/receipt/viewer/?chain=https://gateway.pinata.cloud/ipfs/Qm…
+window.addEventListener("DOMContentLoaded", () => {
+  const params = new URLSearchParams(location.search);
+  const chain = params.get("chain");
+  if (chain) {
+    document.getElementById("path").value = chain;
+    run();
+  }
+});
 
 async function run() {
   const file = document.getElementById("file").files[0];
