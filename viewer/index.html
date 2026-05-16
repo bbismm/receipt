@@ -372,9 +372,13 @@ window.addEventListener("DOMContentLoaded", () => {
   } else {
     // Best-effort: refresh the iBitLabs demo link to the latest anchor
     // published by ~/ibitlabs/scripts/publish_latest_anchor.sh (daily
-    // 22:00 local). If latest.json is missing/stale/CORS-blocked, the
-    // hardcoded link in the markup stays — fail-quiet by design.
-    fetch("../latest.json", {cache: "no-cache"}).then(r => r.ok ? r.json() : null).then(m => {
+    // 22:00 local). The canonical source of truth lives on bbismm.github.io
+    // (auto-deploys ~30s after each anchor push); this absolute URL means
+    // every mirror of the viewer (GH Pages, ibitlabs.com, anywhere else)
+    // sees the same up-to-date manifest. CORS is permissive on GH Pages.
+    // If the fetch is missing/CORS-blocked/network-down, the hardcoded
+    // link in the markup stays — fail-quiet by design.
+    fetch("https://bbismm.github.io/receipt/latest.json", {cache: "no-cache"}).then(r => r.ok ? r.json() : null).then(m => {
       if (!m || !m.anchor || !m.anchor.gateway_url) return;
       const link = document.getElementById("ibitlabs-demo-link");
       if (!link) return;
