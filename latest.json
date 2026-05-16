@@ -1,0 +1,14 @@
+{
+  "agent": "iBitLabs/sniper-v5.1-live",
+  "anchor": {
+    "seq": 1187,
+    "ts_ms": 1778902994263,
+    "ts_iso": "2026-05-16T03:43:14.263000Z",
+    "cid": "QmPjNuUXLadzmjz8K8fe4uTXUkEGp2c7xFW4pQWwpiWKtL",
+    "anchor_uri": "ipfs://QmPjNuUXLadzmjz8K8fe4uTXUkEGp2c7xFW4pQWwpiWKtL",
+    "gateway_url": "https://gateway.pinata.cloud/ipfs/QmPjNuUXLadzmjz8K8fe4uTXUkEGp2c7xFW4pQWwpiWKtL",
+    "merkle_root": "sha256:1d80bc3a7f9bcc4670a42f4b45d15cff478d243a2f9db0515ab78a61b8feb5c6",
+    "events_covered": 1187
+  },
+  "published_at_iso": "2026-05-16T12:26:32Z"
+}
