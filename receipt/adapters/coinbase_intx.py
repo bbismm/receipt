@@ -77,13 +77,20 @@ class CoinbaseAdapter:
         if symbol.endswith("-CDE"):
             try:
                 pos = self._client.get_futures_position(product_id=symbol)
+                if pos is None:
+                    return self._normalize_futures_position({}, symbol)
                 d = pos.to_dict() if hasattr(pos, "to_dict") else dict(pos)
                 return self._normalize_futures_position(d, symbol)
+            except TypeError as e:
+                if "FCMPosition" in str(e) and "NoneType" in str(e):
+                    return self._normalize_futures_position({}, symbol)
+                return {"symbol": symbol, "side": "unknown", "size": 0,
+                        "entry_price": None, "unrealized_pnl_usd": 0,
+                        "error": f"get_futures_position failed: {e}"}
             except Exception as e:
                 return {"symbol": symbol, "side": "unknown", "size": 0,
                         "entry_price": None, "unrealized_pnl_usd": 0,
                         "error": f"get_futures_position failed: {e}"}
-        # INTX perps fallback
         portfolio_uuid = self._intx_portfolio_uuid()
         if portfolio_uuid is None:
             return {"symbol": symbol, "side": "unknown", "size": 0,
@@ -93,8 +100,16 @@ class CoinbaseAdapter:
             pos = self._client.get_perps_position(
                 portfolio_uuid=portfolio_uuid, symbol=symbol
             )
+            if pos is None:
+                return self._normalize_position({}, symbol)
             d = pos.to_dict() if hasattr(pos, "to_dict") else dict(pos)
             return self._normalize_position(d, symbol)
+        except TypeError as e:
+            if "NoneType" in str(e) and ("PerpsPosition" in str(e) or "Position" in str(e)):
+                return self._normalize_position({}, symbol)
+            return {"symbol": symbol, "side": "unknown", "size": 0,
+                    "entry_price": None, "unrealized_pnl_usd": 0,
+                    "error": f"get_perps_position failed: {e}"}
         except Exception as e:
             return {"symbol": symbol, "side": "unknown", "size": 0,
                     "entry_price": None, "unrealized_pnl_usd": 0,
