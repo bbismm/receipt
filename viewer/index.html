@@ -101,7 +101,7 @@
   </div>
   <div class="examples" style="color:var(--muted); font-size:12px; margin-top:-12px; margin-bottom:24px;">
     Try a live chain:
-    <a href="?chain=https://gateway.pinata.cloud/ipfs/QmPjNuUXLadzmjz8K8fe4uTXUkEGp2c7xFW4pQWwpiWKtL" style="color:var(--green);">iBitLabs sniper-v5.1 — 1,187 events, anchored to IPFS</a>
+    <a id="ibitlabs-demo-link" href="?chain=https://gateway.pinata.cloud/ipfs/QmPjNuUXLadzmjz8K8fe4uTXUkEGp2c7xFW4pQWwpiWKtL" style="color:var(--green);">iBitLabs sniper-v5.1 — 1,187 events, anchored to IPFS</a>
     ·
     <a href="?chain=code-writing-demo.jsonl" style="color:var(--green);">code-writing demo — 12 events, local</a>
   </div>
@@ -369,6 +369,20 @@ window.addEventListener("DOMContentLoaded", () => {
   if (chain) {
     document.getElementById("path").value = chain;
     run();
+  } else {
+    // Best-effort: refresh the iBitLabs demo link to the latest anchor
+    // published by ~/ibitlabs/scripts/publish_latest_anchor.sh (daily
+    // 22:00 local). If latest.json is missing/stale/CORS-blocked, the
+    // hardcoded link in the markup stays — fail-quiet by design.
+    fetch("../latest.json", {cache: "no-cache"}).then(r => r.ok ? r.json() : null).then(m => {
+      if (!m || !m.anchor || !m.anchor.gateway_url) return;
+      const link = document.getElementById("ibitlabs-demo-link");
+      if (!link) return;
+      link.href = "?chain=" + encodeURIComponent(m.anchor.gateway_url);
+      const date = (m.anchor.ts_iso || "").slice(0, 10);
+      const events = (m.anchor.events_covered || 0).toLocaleString("en-US");
+      link.textContent = `iBitLabs sniper-v5.1 — ${events} events, anchored ${date}`;
+    }).catch(()=>{});
   }
 });
 
